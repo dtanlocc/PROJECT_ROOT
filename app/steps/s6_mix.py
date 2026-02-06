@@ -128,7 +128,7 @@ class Step6Mix(BaseStep):
         # 3. Build FFmpeg Complex Filter
         # Inputs: 0:Video, 1:BG, 2:Extra(Optional) ... TTS files
         inputs = ["-i", str(video_path), "-i", str(bg_music)]
-        filter_chains = [f"[1:a]volume={self.cfg.step6.bg_volume}[bg]"] # bg_volume ở đây là float (VD: 0.3)
+        filter_chains = [f"[1:a]volume={self.cfg.step6.bg_volume}dB[bg]"]
         mix_inputs = ["[bg]"]
         
         # Nếu có extra voice
@@ -149,16 +149,19 @@ class Step6Mix(BaseStep):
             
         # Mix tất cả
         filter_chains.append(f"{''.join(mix_inputs)}amix=inputs={len(mix_inputs)}:normalize=0[mixed]")
-        # Pitch (nếu cần, mặc định 1.0)
-        # filter_chains.append(f"[mixed]rubberband=pitch=1.0[outa]") 
-        
+        pitch = getattr(self.cfg.step6, "pitch_factor", 1.0)
+        if pitch != 1.0:
+            filter_chains.append(f"[mixed]rubberband=pitch={pitch}[outa]")
+            map_audio = "[outa]"
+        else:
+            map_audio = "[mixed]"
         full_filter = ";".join(filter_chains)
-        
+
         cmd = [
             self.ffmpeg_bin, "-y",
             *inputs,
             "-filter_complex", full_filter,
-            "-map", "0:v", "-map", "[mixed]", # Map video gốc và audio đã mix
+            "-map", "0:v", "-map", map_audio,
             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
             "-shortest",
             str(out_file)

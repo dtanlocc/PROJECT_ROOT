@@ -1,11 +1,10 @@
 # ============================================================
 # PIPELINE REUP VIDEO - REQUIREMENTS
-# Lưu ý: Torch và Paddle được cài riêng trong setup_venv.bat
-# để quản lý chính xác phiên bản CUDA.
+# GPU: chay setup_venv.bat (PyTorch + Paddle cung CUDA 11.8)
+# CPU: chay setup_venv_cpu.bat (tranh loi shm.dll)
 # ============================================================
 
-# --- CORE SYSTEM ---
-# QUAN TRỌNG: Giữ Numpy < 2.0 để tránh lỗi tương thích (ABI version conflict)
+# --- CORE ---
 numpy==1.26.4
 python-dotenv==1.2.1
 PyYAML==6.0.2
@@ -15,30 +14,22 @@ colorama
 pydantic>=2.0.0
 packaging
 
-# --- AUDIO PROCESSING ---
-# Demucs tách nhạc (Version ổn định)
+# --- AUDIO ---
 demucs==4.0.1
-# Soundfile: Cần thiết để fix lỗi Torchaudio trên Windows
 soundfile==0.13.1
-# Xử lý cắt ghép audio
 pydub==0.25.1
-# Google TTS (Giọng đọc)
 gTTS==2.5.4
 
-# --- AI & TRANSCRIPTION ---
-# Whisper (Voice to Text)
+# --- AI / TRANSCRIPTION ---
 faster-whisper==1.2.1
-# PaddleOCR (Image to Text) - Core lib
-# paddleocr>=2.7.0
 paddleocr==2.7.3
-# Fix lỗi protobuf cho Paddle trên Windows (Bắt buộc 3.20.x)
 protobuf==3.20.2
-# OpenCV xử lý ảnh
 opencv-python==4.6.0.66
 Pillow>=10.0.0
 
-# --- TRANSLATION ---
+# --- TRANSLATION (Step 4 dùng deep_translator) ---
 deep-translator>=1.11.4
+# google-generativeai: tu chon neu sau nay dung Gemini
 google-generativeai>=0.4.0
 
 # --- SUBTITLES ---

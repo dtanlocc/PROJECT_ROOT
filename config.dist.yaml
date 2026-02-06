@@ -1,0 +1,62 @@
+# ============================================================
+# Pipeline Reup Pro v2 - Config mẫu (không dán đường dẫn máy)
+# Copy thành config.yaml và sửa theo máy của bạn.
+# ============================================================
+
+pipeline:
+  workspace_root: .
+  input_videos: input
+  step1_wav: workspace/01_wav
+  step2_separated: workspace/02_separated
+  step3_srt_raw: workspace/03_srt_raw
+  step4_srt_translated: workspace/04_srt_translated
+  step5_video_subbed: workspace/05_video_subbed
+  step6_final: output
+  step6_voices_cache: workspace/06_voices
+  done: done
+  failed: failed
+
+# Để trống = dùng ffmpeg trong PATH; hoặc set đường dẫn tới ffmpeg.exe
+ffmpeg_bin: ""
+
+step1:
+  sample_rate: 16000
+  channels: 1
+
+step2:
+  model: htdemucs
+  device: cuda
+  jobs: 1
+  two_stems: true
+
+step3:
+  srt_source: voice
+  model_size: large-v2
+  device: cuda
+  language: zh
+  image_frame_interval: 0.5
+  image_ocr_lang: ch
+  image_use_gpu: true
+  similarity_threshold: 0.7
+  image_min_duration_ms: 300
+  image_confidence_threshold: 0.5
+
+step4:
+  model_name: gemini-2.5-flash
+  source_lang: zh-CN
+  target_lang: vi
+  gemini_api_keys: []
+
+step5:
+  ocr_lang: ch
+  roi_y_start: 0.5
+  roi_y_end: 0.9
+  font_path: ""
+  font_size: 18
+  text_color: "&H00FFFFFF"
+  outline_color: "&H00000000"
+
+step6:
+  tts_lang: vi
+  bg_volume: -12.0
+  pitch_factor: 1.0

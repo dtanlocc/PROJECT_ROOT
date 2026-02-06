@@ -3,57 +3,68 @@ chcp 65001 >nul
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-TITLE Pipeline Reup Pro - Universal Setup
+TITLE Pipeline Reup Pro - Setup GPU (CUDA 11.8)
 
 echo ===============================================================================
-echo   CAI DAT MOI TRUONG VAN NANG (GPU + CPU)
-echo   (Ban nay chay duoc tren ca may co Card roi va may chi co CPU)
+echo   CAI DAT MOI TRUONG AO - BAN GPU
+echo   PyTorch + PaddlePaddle cung CUDA 11.8 (chi can 1 bo NVIDIA Driver/CUDA)
+echo   Neu loi shm.dll: chay setup_venv_cpu.bat hoac cai VC++ Redistributable
 echo ===============================================================================
 echo.
 
 REM 1. KIEM TRA PYTHON
 where python >nul 2>&1
 if errorlevel 1 (
-    echo [LOI] Khong tim thay Python. Hay cai Python 3.10 va tich "Add to PATH".
+    echo [LOI] Khong tim thay Python. Cai Python 3.10+ va tich "Add to PATH".
     pause
     exit /b 1
 )
 
 REM 2. TAO VENV
 if exist "venv" (
-    echo Phat hien venv cu. Dang xoa de cai moi cho sach se...
+    echo Xoa venv cu...
     rmdir /s /q venv
 )
-echo Dang tao moi truong ao 'venv'...
+echo Tao venv...
 python -m venv venv
+if errorlevel 1 (
+    echo [LOI] Tao venv that bai.
+    pause
+    exit /b 1
+)
 
-REM 3. KICH HOAT & UPDATE PIP
-call venv\Scripts\activate
+call venv\Scripts\activate.bat
 python -m pip install --upgrade pip
 
 echo.
-echo [BUOC 1/3] Cai dat PyTorch (Ho tro GPU & CPU)...
-echo -------------------------------------------------------
-REM Cài bản CUDA 11.8 (Bản ổn định nhất hiện nay). 
-REM Nếu máy không có GPU, nó sẽ tự chạy bằng CPU.
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+echo [1/3] PyTorch GPU (CUDA 11.8)...
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
+if errorlevel 1 (
+    echo [LOI] PyTorch that bai. Thu setup_venv_cpu.bat.
+    pause
+    exit /b 1
+)
 
 echo.
-echo [BUOC 2/3] Cai dat PaddlePaddle (Ho tro GPU & CPU)...
-echo -------------------------------------------------------
-REM Tương tự, cài bản GPU CUDA 11.8
+echo [2/3] PaddlePaddle GPU (CUDA 11.8)...
 pip install --no-cache-dir paddlepaddle-gpu==2.6.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/ --trusted-host www.paddlepaddle.org.cn
+if errorlevel 1 (
+    echo [CANH BAO] Paddle GPU that bai. May khong GPU: pip install paddlepaddle==2.6.1
+    pause
+)
 
 echo.
-echo [BUOC 3/3] Cai dat cac thu vien phu tro...
-echo -------------------------------------------------------
+echo [3/3] Thu vien phu tro (requirements.txt)...
 pip install -r requirements.txt
+if errorlevel 1 (
+    echo [LOI] Cai requirements that bai.
+    pause
+    exit /b 1
+)
 
 echo.
 echo ===============================================================================
-echo   CAI DAT HOAN TAT!
-echo   Tool nay gio co the chay tren moi may.
+echo   CAI DAT GPU HOAN TAT - Dong bo CUDA 11.8
 echo ===============================================================================
-echo.
-python -c "import torch; print('Torch:', torch.__version__, '| CUDA:', torch.cuda.is_available())"
+python -c "import torch; print('PyTorch:', torch.__version__, '| CUDA:', torch.cuda.is_available())"
 pause

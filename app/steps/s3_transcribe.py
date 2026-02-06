@@ -56,12 +56,20 @@ class Step3Transcribe(BaseStep):
             for i, s in enumerate(segments, 1):
                 f.write(f"{i}\n{self._fmt(s.start)} --> {self._fmt(s.end)}\n{s.text.strip()}\n\n")
 
+    def _preprocess_roi_all_colors(self, roi):
+        """Tiền xử lý để nhận chữ nhiều màu (đỏ, xanh, vàng, trắng) như logic gốc step3_ima."""
+        import cv2
+        import numpy as np
+        max_channel = np.max(roi, axis=2)
+        enhanced = cv2.convertScaleAbs(max_channel, alpha=1.5, beta=10)
+        _, thresh = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        return thresh
+
     def _run_ocr(self, video_path, out_path):
-        # --- LOGIC GỐC CỦA BẠN: PADDLE OCR + SEQUENCEMATCHER ---
+        # --- PADDLE OCR + SEQUENCEMATCHER (căn logic gốc: ROI config, all-color preprocess, confidence, min_duration) ---
         if not self._ocr:
             from paddleocr import PaddleOCR
             logging.getLogger("ppocr").setLevel(logging.ERROR)
-            # Khởi tạo không dùng tham số show_log (bản mới đã bỏ)
             self._ocr = PaddleOCR(use_angle_cls=False, lang=self.cfg.step3.image_ocr_lang, use_gpu=self.cfg.step3.image_use_gpu)
         
         import cv2
@@ -69,7 +77,12 @@ class Step3Transcribe(BaseStep):
         
         cap = cv2.VideoCapture(str(video_path))
         fps = cap.get(cv2.CAP_PROP_FPS) or 30
-        interval = int(fps * self.cfg.step3.image_frame_interval) or 1
+        interval = max(1, int(fps * self.cfg.step3.image_frame_interval))
+        min_duration_ms = self.cfg.step3.image_min_duration_ms
+        conf_thresh = self.cfg.step3.image_confidence_threshold
+        # ROI từ config step5 (vùng sub thường nằm dưới)
+        roi_y_start = getattr(self.cfg.step5, "roi_y_start", 0.5)
+        roi_y_end = getattr(self.cfg.step5, "roi_y_end", 0.9)
         
         subs = []
         last_text = ""
@@ -78,37 +91,42 @@ class Step3Transcribe(BaseStep):
         frame_idx = 0
         while True:
             ret, frame = cap.read()
-            if not ret: break
-            
+            if not ret:
+                break
             if frame_idx % interval == 0:
                 curr_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
                 h, w = frame.shape[:2]
-                roi = frame[int(h*0.75):h, 0:w] # Crop 25% đáy
-                
-                # Preprocess Otsu
-                gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                _, bin_img = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                
+                y1, y2 = int(h * roi_y_start), int(h * roi_y_end)
+                roi = frame[y1:y2, 0:w]
+                if roi.size == 0:
+                    frame_idx += 1
+                    continue
+                bin_img = self._preprocess_roi_all_colors(roi)
                 res = self._ocr.ocr(bin_img, cls=False)
-                # Parse text từ result của Paddle
                 txt = ""
                 if res and res[0]:
-                    txt = " ".join([line[1][0] for line in res[0]]).strip()
-                
+                    parts = [
+                        line[1][0] for line in res[0]
+                        if len(line[1]) > 1 and float(line[1][1] or 0) >= conf_thresh
+                    ]
+                    txt = " ".join(parts).strip()
                 if txt:
-                    # Logic gộp sub trùng của bạn
                     sim = SequenceMatcher(None, last_text, txt).ratio()
                     if sim < self.cfg.step3.similarity_threshold:
                         if last_text:
-                            subs.append((start_ms, curr_ms, last_text))
+                            dur_ms = curr_ms - start_ms
+                            if dur_ms >= min_duration_ms:
+                                subs.append((start_ms, curr_ms, last_text))
                         last_text = txt
                         start_ms = curr_ms
             frame_idx += 1
-            
+
         if last_text:
-            subs.append((start_ms, cap.get(cv2.CAP_PROP_POS_MSEC), last_text))
+            end_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
+            if (end_ms - start_ms) >= min_duration_ms:
+                subs.append((start_ms, end_ms, last_text))
         cap.release()
-        
+
         with open(out_path, "w", encoding="utf-8") as f:
             for i, (s, e, t) in enumerate(subs, 1):
                 f.write(f"{i}\n{self._fmt(s/1000)} --> {self._fmt(e/1000)}\n{t}\n\n")

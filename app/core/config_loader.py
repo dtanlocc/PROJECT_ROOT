@@ -24,6 +24,8 @@ class Step3Config(BaseModel):
     image_ocr_lang: str = "ch"
     image_use_gpu: bool = True
     similarity_threshold: float = 0.7
+    image_min_duration_ms: int = 300
+    image_confidence_threshold: float = 0.5
 
 class Step4Config(BaseModel):
     model_name: str = "gemini-2.5-flash"
@@ -66,7 +68,8 @@ class Step5Config(BaseModel):
 
 class Step6Config(BaseModel):
     tts_lang: str = "vi"
-    bg_volume: float = -12.0
+    bg_volume: float = -12.0  # dB (VD: -12.0 = giảm 12dB)
+    pitch_factor: float = 1.0  # 1.0 = giữ nguyên, 1.2 = cao hơn (như bản gốc)
 
 class PipelineConfig(BaseModel):
     workspace_root: Path = Path(".")
@@ -94,14 +97,27 @@ class GlobalConfig(BaseModel):
 # Singleton Config Loader
 class ConfigLoader:
     _instance = None
-    
+
+    @classmethod
+    def _resolve_config_path(cls, config_path: str) -> Path:
+        """Tìm file config: ưu tiên config_path, không có thì dùng config.dist.yaml."""
+        p = Path(config_path)
+        if p.exists():
+            return p
+        dist = Path("config.dist.yaml")
+        if dist.exists():
+            return dist
+        return p
+
     @classmethod
     def load(cls, config_path="config.yaml") -> GlobalConfig:
-        if not Path(config_path).exists():
-            raise FileNotFoundError("config.yaml missing!")
-            
-        with open(config_path, "r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f)
+        resolved = cls._resolve_config_path(config_path)
+        if not resolved.exists():
+            raise FileNotFoundError(
+                "config.yaml không tồn tại. Copy config.dist.yaml thành config.yaml và sửa cấu hình."
+            )
+        with open(resolved, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
 
         from dotenv import load_dotenv
         load_dotenv()

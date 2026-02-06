@@ -8,6 +8,7 @@ from pathlib import Path
 from loguru import logger
 from tkinter import filedialog, messagebox
 
+from app import __version__
 from app.core.config_loader import ConfigLoader
 from app.core.engine import ProEngine
 
@@ -34,7 +35,7 @@ class ProGUI(ctk.CTk):
         super().__init__()
         
         # 1. SETUP CỬA SỔ
-        self.title("PIPELINE REUP PRO - ULTIMATE EDITION")
+        self.title(f"Pipeline Reup Pro v{__version__}")
         self.geometry("1280x850")
         self.minsize(1100, 750)
         
@@ -54,6 +55,7 @@ class ProGUI(ctk.CTk):
         self.log_queue = queue.Queue()
         logger.remove()
         logger.add(LogSink(self.log_queue), format="<green>{time:HH:mm:ss}</green> | <level>{message}</level>", level="INFO")
+        Path("logs").mkdir(exist_ok=True)
         logger.add("logs/session.log", rotation="5 MB", level="DEBUG")
         sys.stderr = StreamToLogger("INFO") 
 
@@ -100,7 +102,7 @@ class ProGUI(ctk.CTk):
         info_frame = ctk.CTkFrame(self.sidebar, fg_color="#2b2b2b")
         info_frame.grid(row=1, column=0, padx=15, pady=(0, 20), sticky="ew")
         ctk.CTkLabel(info_frame, text="● LICENSE: ACTIVE", text_color="#2ecc71", font=ctk.CTkFont(size=12, weight="bold")).pack(pady=(10, 2))
-        ctk.CTkLabel(info_frame, text="● VERSION: 2.5.0", text_color="#3498db", font=ctk.CTkFont(size=12, weight="bold")).pack(pady=2)
+        ctk.CTkLabel(info_frame, text=f"● VERSION: {__version__}", text_color="#3498db", font=ctk.CTkFont(size=12, weight="bold")).pack(pady=2)
         ctk.CTkLabel(info_frame, text=f"● {self.hw_info}", text_color=self.hw_color, font=ctk.CTkFont(size=12, weight="bold")).pack(pady=(2, 10))
 
         # Buttons
