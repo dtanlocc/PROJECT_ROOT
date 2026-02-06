@@ -1,8 +1,8 @@
 import os
 import yaml
 from pathlib import Path
-from pydantic import BaseModel, Field
-from typing import List, Optional
+from pydantic import BaseModel, Field, field_validator
+from typing import List, Optional, Union, Any
 
 # Định nghĩa các Model dữ liệu (Validation)
 class Step1Config(BaseModel):
@@ -16,11 +16,10 @@ class Step2Config(BaseModel):
     two_stems: bool = True
 
 class Step3Config(BaseModel):
-    srt_source: str = "voice" # voice | image
+    srt_source: str = "voice"
     model_size: str = "large-v2"
     device: str = "cuda"
     language: str = "zh"
-    # Config cho Image OCR
     image_frame_interval: float = 0.5
     image_ocr_lang: str = "ch"
     image_use_gpu: bool = True
@@ -38,8 +37,32 @@ class Step5Config(BaseModel):
     roi_y_end: float = 0.9
     font_path: str = ""
     font_size: int = 18
-    text_color: str = "&H00FFFFFF" # Style ASS
-    outline_color: str = "&H00000000"
+    # Cho phép nhập List[int] hoặc String
+    text_color: Union[List[int], str] = "&H00FFFFFF" 
+    outline_color: Union[List[int], str] = "&H00000000"
+
+    # --- VALIDATOR: Tự động chuyển List [r,g,b,a] sang Hex String ASS ---
+    @field_validator('text_color', 'outline_color')
+    @classmethod
+    def convert_rgba_to_ass(cls, v: Any) -> str:
+        # Nếu người dùng đã nhập string đúng chuẩn (VD: &H00FFFFFF) thì giữ nguyên
+        if isinstance(v, str):
+            return v
+        
+        # Nếu là List [R, G, B, A]
+        if isinstance(v, list) and len(v) >= 3:
+            r = v[0]
+            g = v[1]
+            b = v[2]
+            # Alpha trong config: 255 là hiện rõ, 0 là trong suốt
+            # Alpha trong ASS: 00 là hiện rõ, FF là trong suốt -> Cần đảo ngược
+            a = v[3] if len(v) > 3 else 255 
+            ass_a = 255 - a
+            
+            # Format ASS là &H(Alpha)(Blue)(Green)(Red) - Lưu ý thứ tự BGR
+            return f"&H{ass_a:02X}{b:02X}{g:02X}{r:02X}"
+            
+        return "&H00FFFFFF" # Fallback màu trắng
 
 class Step6Config(BaseModel):
     tts_lang: str = "vi"
@@ -48,7 +71,6 @@ class Step6Config(BaseModel):
 class PipelineConfig(BaseModel):
     workspace_root: Path = Path(".")
     input_videos: Path = Path("input")
-    # Các path output
     step1_wav: Path = Path("workspace/01_wav")
     step2_separated: Path = Path("workspace/02_separated")
     step3_srt_raw: Path = Path("workspace/03_srt_raw")
@@ -81,12 +103,9 @@ class ConfigLoader:
         with open(config_path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f)
 
-        # Map dữ liệu từ config cũ của bạn sang cấu trúc mới
-        # Xử lý .env (API Keys, FFmpeg path)
         from dotenv import load_dotenv
         load_dotenv()
         
-        # Inject API Keys từ env vào config nếu có
         env_keys = os.getenv("GEMINI_API_KEYS")
         if env_keys:
             if "step4" not in raw: raw["step4"] = {}

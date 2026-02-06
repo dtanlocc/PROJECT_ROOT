@@ -1,4 +1,7 @@
 import os
+import re
+import asyncio
+import subprocess
 import shutil
 from pathlib import Path
 from loguru import logger
@@ -8,118 +11,158 @@ from app.services.ffmpeg_manager import FFmpegManager
 class Step6Mix(BaseStep):
     def __init__(self, cfg, ffmpeg: FFmpegManager):
         super().__init__(cfg)
-        self.ffmpeg = ffmpeg
+        self.ffmpeg_bin = ffmpeg.bin
         self.out_dir = self.cfg.pipeline.step6_final
         self.cache_dir = self.cfg.pipeline.step6_voices_cache
+        self.final_voice_cache = self.cache_dir.parent / "voices_final" # Cache đã chỉnh tốc độ
+
+        # Setup Env Pydub/gTTS
+        os.environ["FFMPEG_BINARY"] = self.ffmpeg_bin
+        try:
+            from gtts import gTTS
+            from pydub import AudioSegment, silence
+            AudioSegment.converter = self.ffmpeg_bin
+        except ImportError:
+            pass
+
+    def _parse_srt_time(self, t_str):
+        # 00:00:05,123 -> ms
+        h, m, s_ms = t_str.split(":")
+        s, ms = s_ms.split(",")
+        return (int(h)*3600 + int(m)*60 + int(s))*1000 + int(ms)
+
+    def _parse_srt(self, path):
+        content = path.read_text(encoding="utf-8").strip()
+        blocks = re.split(r"\n\s*\n", content)
+        parsed = []
+        for b in blocks:
+            lines = b.strip().split("\n")
+            if len(lines) < 3: continue
+            try:
+                idx = int(lines[0])
+                times = re.findall(r"(\d+:\d+:\d+,\d+)", lines[1])
+                start = self._parse_srt_time(times[0])
+                end = self._parse_srt_time(times[1])
+                text = " ".join(lines[2:]).strip()
+                parsed.append((idx, start, end, text))
+            except: continue
+        return parsed
+
+    async def _gen_tts(self, idx, text, out_path):
+        from gtts import gTTS
+        from pydub import AudioSegment
+        
+        def job():
+            clean_text = re.sub(r"[.,?!]", "", text).strip()
+            if not clean_text: return
+            try:
+                tts = gTTS(clean_text, lang=self.cfg.step6.tts_lang, slow=False)
+                tts.save(str(out_path))
+            except Exception as e:
+                logger.error(f"TTS Error {idx}: {e}")
+
+        await asyncio.to_thread(job)
 
     def process(self, video_path: Path, srt_path: Path, bg_music: Path) -> Path:
         self.ensure_dir(self.out_dir)
         self.ensure_dir(self.cache_dir)
+        self.ensure_dir(self.final_voice_cache)
         
         out_file = self.out_dir / f"{video_path.stem}.mp4"
         if out_file.exists(): return out_file
 
-        logger.info(f"🎹 Mixing: {video_path.stem}")
+        logger.info(f"🎹 [Step 6] Mix & TTS: {video_path.name}")
+        
+        # Audio phụ (Vocals) - có thể có hoặc không
+        extra_voice = bg_music.parent / "vocals.wav" # Logic mặc định của Demucs
 
-        # Setup Pydub Environment (Cực kỳ quan trọng trên Windows)
-        os.environ["FFMPEG_BINARY"] = self.ffmpeg.bin
+        # 1. Parse SRT & Gen TTS
+        subs = self._parse_srt(srt_path)
+        voice_sub_dir = self.cache_dir / video_path.stem
+        final_voice_sub_dir = self.final_voice_cache / video_path.stem
+        voice_sub_dir.mkdir(exist_ok=True)
+        final_voice_sub_dir.mkdir(exist_ok=True)
+
+        # Chạy Async TTS
+        async def run_all_tts():
+            tasks = []
+            for idx, _, _, text in subs:
+                p = voice_sub_dir / f"{idx:03d}.mp3"
+                if not p.exists():
+                    tasks.append(self._gen_tts(idx, text, p))
+            if tasks: await asyncio.gather(*tasks)
         
         try:
-            from pydub import AudioSegment
-            from gtts import gTTS
-            import pysrt
-            
-            # Chỉ định converter cho Pydub dùng đúng FFmpeg của mình
-            AudioSegment.converter = self.ffmpeg.bin
-            # Cố gắng tìm ffprobe cùng thư mục
-            probe_path = str(Path(self.ffmpeg.bin).parent / "ffprobe.exe")
-            if os.path.exists(probe_path):
-                AudioSegment.ffprobe = probe_path
-                
-        except ImportError:
-            logger.error("❌ Missing pydub/gtts/pysrt.")
-            raise RuntimeError("Missing libraries for Step 6")
+            asyncio.run(run_all_tts())
+        except Exception as e:
+            logger.error(f"Async TTS Failed: {e}")
 
-        # 1. Load Nhạc nền & Xử lý Volume
-        try:
-            bg = AudioSegment.from_file(str(bg_music))
-        except:
-            logger.warning("⚠️ Background music load failed, creating silence.")
-            bg = AudioSegment.silent(duration=10000)
-
-        # Giảm âm lượng nhạc nền (Ducking) theo config
-        # bg_volume thường là số âm (ví dụ -12)
-        bg = bg + self.cfg.step6.bg_volume
-
-        # 2. Tạo TTS từ Subtitle
-        subs = pysrt.open(str(srt_path))
+        # 2. Adjust Speed (Atempo) logic
+        from pydub import AudioSegment
+        final_sub_data = [] # List[(idx, start, end)]
         
-        # Thư mục cache giọng cho video này
-        voice_folder = self.cache_dir / video_path.stem
-        voice_folder.mkdir(exist_ok=True)
+        for idx, start, end, text in subs:
+            src = voice_sub_dir / f"{idx:03d}.mp3"
+            dst = final_voice_sub_dir / f"{idx:03d}.mp3"
+            
+            if not src.exists(): continue
+            
+            target_dur = end - start
+            if target_dur <= 0: target_dur = 1000
+            
+            audio = AudioSegment.from_file(str(src))
+            orig_dur = len(audio)
+            
+            # Logic tốc độ (Speed up nếu dài quá)
+            if orig_dur > target_dur:
+                speed = max(0.5, min(orig_dur / target_dur, 2.0))
+                subprocess.run(
+                    [self.ffmpeg_bin, "-y", "-i", str(src), "-filter:a", f"atempo={speed:.4f}", str(dst)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+            else:
+                shutil.copy2(str(src), str(dst)) # Giữ nguyên nếu ngắn hơn
+            
+            final_sub_data.append((idx, start))
+
+        # 3. Build FFmpeg Complex Filter
+        # Inputs: 0:Video, 1:BG, 2:Extra(Optional) ... TTS files
+        inputs = ["-i", str(video_path), "-i", str(bg_music)]
+        filter_chains = [f"[1:a]volume={self.cfg.step6.bg_volume}[bg]"] # bg_volume ở đây là float (VD: 0.3)
+        mix_inputs = ["[bg]"]
         
-        final_mix = bg
-        max_duration = len(bg)
-
-        # Duyệt qua từng câu sub
-        for sub in subs:
-            text = sub.text.replace("\n", " ").strip()
-            if not text: continue
+        # Nếu có extra voice
+        input_idx = 2
+        if extra_voice.exists():
+            inputs.extend(["-i", str(extra_voice)])
+            filter_chains.append(f"[{input_idx}:a]volume=0.2[extra]")
+            mix_inputs.append("[extra]")
+            input_idx += 1
             
-            # File tts cache: 1.mp3, 2.mp3...
-            tts_file = voice_folder / f"{sub.index}.mp3"
+        # Thêm TTS inputs
+        for idx, start in final_sub_data:
+            path = final_voice_sub_dir / f"{idx:03d}.mp3"
+            inputs.extend(["-i", str(path)])
+            filter_chains.append(f"[{input_idx}:a]adelay={start}|{start}[tts{idx}]")
+            mix_inputs.append(f"[tts{idx}]")
+            input_idx += 1
             
-            # Gọi gTTS (Google TTS)
-            if not tts_file.exists():
-                try:
-                    tts = gTTS(text=text, lang=self.cfg.step6.tts_lang)
-                    tts.save(str(tts_file))
-                except Exception as e:
-                    logger.warning(f"TTS Fail line {sub.index}: {e}")
-                    continue
-            
-            # Ghép vào timeline
-            try:
-                seg = AudioSegment.from_file(str(tts_file))
-                
-                # Tính thời gian bắt đầu (ms)
-                start_ms = (sub.start.hours*3600 + sub.start.minutes*60 + sub.start.seconds)*1000 + sub.start.milliseconds
-                
-                # Overlay giọng đọc lên nhạc nền
-                final_mix = final_mix.overlay(seg, position=start_ms)
-                
-                # Nếu giọng đọc dài hơn nhạc nền, cập nhật max_duration
-                end_ms = start_ms + len(seg)
-                if end_ms > max_duration:
-                    max_duration = end_ms
-            except Exception as e:
-                pass
-
-        # 3. Kéo dài nhạc nền nếu thiếu (nối thêm silence)
-        if max_duration > len(final_mix):
-            silence = AudioSegment.silent(duration=(max_duration - len(final_mix)) + 500)
-            final_mix = final_mix + silence
-
-        # Xuất file Audio cuối cùng (temp)
-        mix_audio_path = voice_folder / "final_mix.mp3"
-        final_mix.export(str(mix_audio_path), format="mp3")
-
-        # 4. Muxing: Ghép Video (Step 5) + Audio Mix (Step 6)
-        # Dùng FFmpeg copy stream video để không render lại hình -> Tốc độ cực nhanh
-        args = [
-            "-i", str(video_path),        # Video Input (đã có sub từ B5)
-            "-i", str(mix_audio_path),    # Audio Input (đã mix)
-            "-c:v", "copy",               # Copy hình
-            "-c:a", "aac", "-b:a", "192k", # Encode lại tiếng cho chuẩn
-            "-map", "0:v:0",              # Lấy luồng hình từ file 0
-            "-map", "1:a:0",              # Lấy luồng tiếng từ file 1
-            "-shortest",                  # Cắt theo luồng ngắn nhất
+        # Mix tất cả
+        filter_chains.append(f"{''.join(mix_inputs)}amix=inputs={len(mix_inputs)}:normalize=0[mixed]")
+        # Pitch (nếu cần, mặc định 1.0)
+        # filter_chains.append(f"[mixed]rubberband=pitch=1.0[outa]") 
+        
+        full_filter = ";".join(filter_chains)
+        
+        cmd = [
+            self.ffmpeg_bin, "-y",
+            *inputs,
+            "-filter_complex", full_filter,
+            "-map", "0:v", "-map", "[mixed]", # Map video gốc và audio đã mix
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-shortest",
             str(out_file)
         ]
         
-        self.ffmpeg.run(args, use_gpu=False)
-        
-        # Dọn dẹp cache voice nếu cần (để tiết kiệm ổ cứng)
-        # shutil.rmtree(voice_folder, ignore_errors=True)
-        
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         return out_file

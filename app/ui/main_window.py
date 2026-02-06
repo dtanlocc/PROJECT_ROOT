@@ -1,184 +1,339 @@
 import threading
 import queue
 import sys
+import yaml
+import os
 import customtkinter as ctk
 from pathlib import Path
 from loguru import logger
+from tkinter import filedialog, messagebox
 
 from app.core.config_loader import ConfigLoader
 from app.core.engine import ProEngine
 
-# Cấu hình giao diện
-ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
-ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
+# --- CẤU HÌNH GIAO DIỆN ---
+ctk.set_appearance_mode("Dark") 
+ctk.set_default_color_theme("blue")
 
 class LogSink:
-    """Class này giúp hứng Log từ Engine đưa lên GUI"""
-    def __init__(self, log_queue):
-        self.log_queue = log_queue
+    """Hứng log từ Loguru đưa vào Queue để hiển thị lên GUI"""
+    def __init__(self, q): self.q = q
+    def write(self, msg): self.q.put(msg)
 
-    def write(self, message):
-        self.log_queue.put(message)
+class StreamToLogger:
+    """Bắt cóc thanh tiến trình (tqdm) đưa vào log"""
+    def __init__(self, level="INFO"):
+        self.level = level
+    def write(self, buffer):
+        text = buffer.strip()
+        if text: logger.opt(depth=1).log(self.level, text)
+    def flush(self): pass
 
 class ProGUI(ctk.CTk):
     def __init__(self):
         super().__init__()
+        
+        # 1. SETUP CỬA SỔ
+        self.title("PIPELINE REUP PRO - ULTIMATE EDITION")
+        self.geometry("1280x850")
+        self.minsize(1100, 750)
+        
+        # 2. DETECT HARDWARE
+        self.hw_info = "Checking..."
+        self.hw_color = "gray"
+        self._check_hardware()
 
-        # Setup Window
-        self.title("Pipeline Reup Pro - Commercial Edition")
-        self.geometry("1100x700")
+        # 3. LOAD CONFIG
+        try:
+            self.cfg = ConfigLoader.load()
+        except Exception as e:
+            messagebox.showerror("Config Error", f"Lỗi đọc config: {e}")
+            sys.exit(1)
+
+        # 4. SETUP LOGGING
+        self.log_queue = queue.Queue()
+        logger.remove()
+        logger.add(LogSink(self.log_queue), format="<green>{time:HH:mm:ss}</green> | <level>{message}</level>", level="INFO")
+        logger.add("logs/session.log", rotation="5 MB", level="DEBUG")
+        sys.stderr = StreamToLogger("INFO") 
+
+        # 5. TRẠNG THÁI ENGINE
+        self.engine = None
+        self.is_running = False
+
+        # 6. DỰNG GIAO DIỆN
+        self._init_layout()
+        self._load_values_to_ui()
+        
+        # 7. LOOP LOG
+        self.after(100, self._poll_log)
+
+    def _check_hardware(self):
+        """Kiểm tra GPU để hiện lên GUI"""
+        try:
+            import torch
+            if torch.cuda.is_available():
+                gpu_name = torch.cuda.get_device_name(0)
+                if len(gpu_name) > 25: gpu_name = gpu_name[:22] + "..."
+                self.hw_info = f"GPU: {gpu_name}"
+                self.hw_color = "#2ecc71" # Xanh lá
+            else:
+                self.hw_info = "MODE: CPU ONLY"
+                self.hw_color = "#f1c40f" # Vàng
+        except:
+            self.hw_info = "MODE: UNKNOWN"
+            self.hw_color = "gray"
+
+    def _init_layout(self):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # Data & Config
-        self.cfg = ConfigLoader.load()
-        self.log_queue = queue.Queue()
-        self.is_running = False
-
-        # --- SETUP LOGGER ---
-        # Hủy logger cũ, thêm sink mới trỏ về GUI
-        logger.remove() 
-        logger.add(LogSink(self.log_queue), format="{time:HH:mm:ss} | {level} | {message}")
-        # Vẫn ghi file log để debug
-        logger.add("logs/gui_session.log", rotation="5 MB")
-
-        # --- LAYOUT ---
-        self._create_sidebar()
-        self._create_main_tabs()
-        
-        # Start Log Polling
-        self.after(100, self._poll_log_queue)
-
-    def _create_sidebar(self):
-        self.sidebar = ctk.CTkFrame(self, width=200, corner_radius=0)
+        # === SIDEBAR (Bên trái) ===
+        self.sidebar = ctk.CTkFrame(self, width=320, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
-        self.sidebar.grid_rowconfigure(4, weight=1)
+        self.sidebar.grid_rowconfigure(6, weight=1)
 
-        ctk.CTkLabel(self.sidebar, text="PIPELINE PRO", font=ctk.CTkFont(size=20, weight="bold")).grid(row=0, column=0, padx=20, pady=(20, 10))
+        # Logo
+        ctk.CTkLabel(self.sidebar, text="PIPELINE\nREUP PRO", font=ctk.CTkFont(size=26, weight="bold")).grid(row=0, column=0, padx=20, pady=(40, 10))
         
-        self.btn_run = ctk.CTkButton(self.sidebar, text="▶ START PROCESSING", fg_color="green", command=self._on_start)
-        self.btn_run.grid(row=1, column=0, padx=20, pady=10)
+        # Info Box
+        info_frame = ctk.CTkFrame(self.sidebar, fg_color="#2b2b2b")
+        info_frame.grid(row=1, column=0, padx=15, pady=(0, 20), sticky="ew")
+        ctk.CTkLabel(info_frame, text="● LICENSE: ACTIVE", text_color="#2ecc71", font=ctk.CTkFont(size=12, weight="bold")).pack(pady=(10, 2))
+        ctk.CTkLabel(info_frame, text="● VERSION: 2.5.0", text_color="#3498db", font=ctk.CTkFont(size=12, weight="bold")).pack(pady=2)
+        ctk.CTkLabel(info_frame, text=f"● {self.hw_info}", text_color=self.hw_color, font=ctk.CTkFont(size=12, weight="bold")).pack(pady=(2, 10))
 
-        self.btn_stop = ctk.CTkButton(self.sidebar, text="⏹ STOP", fg_color="red", state="disabled", command=self._on_stop)
-        self.btn_stop.grid(row=2, column=0, padx=20, pady=10)
+        # Buttons
+        self.btn_run = ctk.CTkButton(self.sidebar, text="▶ BẮT ĐẦU XỬ LÝ", height=55, fg_color="#27ae60", hover_color="#2ecc71", font=ctk.CTkFont(size=15, weight="bold"), command=self._on_start)
+        self.btn_run.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
+
+        self.btn_save = ctk.CTkButton(self.sidebar, text="💾 LƯU CẤU HÌNH", height=40, fg_color="#2980b9", hover_color="#3498db", command=self._on_save_config)
+        self.btn_save.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
+
+        self.btn_open_out = ctk.CTkButton(self.sidebar, text="📂 MỞ THƯ MỤC OUTPUT", height=40, fg_color="#e67e22", hover_color="#d35400", command=self._open_output_folder)
+        self.btn_open_out.grid(row=4, column=0, padx=20, pady=10, sticky="ew")
 
         # Status
-        self.lbl_status = ctk.CTkLabel(self.sidebar, text="Ready", text_color="gray")
-        self.lbl_status.grid(row=5, column=0, padx=20, pady=10)
+        self.lbl_status = ctk.CTkLabel(self.sidebar, text="READY TO RUN", font=ctk.CTkFont(size=14, weight="bold"), text_color="gray")
+        self.lbl_status.grid(row=7, column=0, padx=20, pady=30)
 
-    def _create_main_tabs(self):
+        # === MAIN CONTENT ===
         self.tabview = ctk.CTkTabview(self)
-        self.tabview.grid(row=0, column=1, padx=20, pady=20, sticky="nsew")
+        self.tabview.grid(row=0, column=1, padx=20, pady=10, sticky="nsew")
 
-        self.tab_dashboard = self.tabview.add("Dashboard")
-        self.tab_settings = self.tabview.add("Settings")
-        self.tab_advanced = self.tabview.add("Advanced")
+        self.tab_dashboard = self.tabview.add("📺 Dashboard")
+        self.tab_io = self.tabview.add("📂 Input/Output")
+        self.tab_ai = self.tabview.add("🧠 AI Config")
+        self.tab_sub = self.tabview.add("🎨 Sub & Mix")
+        self.tab_sys = self.tabview.add("⚙️ Hệ Thống")
 
-        # --- TAB 1: DASHBOARD (LOGS) ---
+        self._ui_dashboard()
+        self._ui_io()
+        self._ui_ai()
+        self._ui_sub_mix()
+        self._ui_sys()
+
+    # --- TAB 1: DASHBOARD (CÓ NÚT XÓA LOG) ---
+    def _ui_dashboard(self):
         self.tab_dashboard.grid_columnconfigure(0, weight=1)
-        self.tab_dashboard.grid_rowconfigure(0, weight=1)
+        self.tab_dashboard.grid_rowconfigure(1, weight=1) # Dòng 1 là textbox log (giãn nở)
+
+        # 1. Toolbar (Chứa Label và Nút Clear)
+        toolbar = ctk.CTkFrame(self.tab_dashboard, fg_color="transparent", height=40)
+        toolbar.grid(row=0, column=0, sticky="ew", padx=5, pady=(0, 5))
         
-        self.log_box = ctk.CTkTextbox(self.tab_dashboard, font=("Consolas", 12))
-        self.log_box.grid(row=0, column=0, sticky="nsew")
-        self.log_box.configure(state="disabled")
-
-        # --- TAB 2: SETTINGS (PATHS) ---
-        self._build_settings_tab()
-
-    def _build_settings_tab(self):
-        # Input Path
-        ctk.CTkLabel(self.tab_settings, text="Input Folder:").grid(row=0, column=0, sticky="w", padx=10, pady=5)
-        self.entry_input = ctk.CTkEntry(self.tab_settings, width=400)
-        self.entry_input.grid(row=0, column=1, padx=10, pady=5)
-        self.entry_input.insert(0, str(self.cfg.pipeline.input_videos))
-        ctk.CTkButton(self.tab_settings, text="Browse", width=50, command=lambda: self._browse(self.entry_input)).grid(row=0, column=2)
-
-        # Output Path
-        ctk.CTkLabel(self.tab_settings, text="Output Folder:").grid(row=1, column=0, sticky="w", padx=10, pady=5)
-        self.entry_output = ctk.CTkEntry(self.tab_settings, width=400)
-        self.entry_output.grid(row=1, column=1, padx=10, pady=5)
-        self.entry_output.insert(0, str(self.cfg.pipeline.step6_final))
-
-        # FFmpeg Path
-        ctk.CTkLabel(self.tab_settings, text="FFmpeg Bin Path:").grid(row=2, column=0, sticky="w", padx=10, pady=5)
-        self.entry_ffmpeg = ctk.CTkEntry(self.tab_settings, width=400, placeholder_text="Auto detect if empty")
-        self.entry_ffmpeg.grid(row=2, column=1, padx=10, pady=5)
-        if self.cfg.ffmpeg_bin:
-            self.entry_ffmpeg.insert(0, str(self.cfg.ffmpeg_bin))
-
-        # Save Button
-        ctk.CTkButton(self.tab_settings, text="Save Config", command=self._save_config).grid(row=4, column=1, pady=20)
-
-    def _browse(self, entry_widget):
-        path = ctk.filedialog.askdirectory()
-        if path:
-            entry_widget.delete(0, "end")
-            entry_widget.insert(0, path)
-
-    def _save_config(self):
-        # Cập nhật giá trị từ GUI vào Object Config
-        # (Ở đây demo cập nhật path, bạn có thể map thêm các field khác)
-        self.cfg.pipeline.input_videos = Path(self.entry_input.get())
-        self.cfg.pipeline.step6_final = Path(self.entry_output.get())
+        # Label tiêu đề
+        ctk.CTkLabel(toolbar, text="LOG HOẠT ĐỘNG (REAL-TIME)", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=5)
         
-        ff = self.entry_ffmpeg.get().strip()
-        self.cfg.ffmpeg_bin = ff if ff else None
+        # Nút Xóa Log
+        ctk.CTkButton(toolbar, text="🗑 XÓA LOG", width=100, height=30, fg_color="#c0392b", hover_color="#e74c3c", command=self._on_clear_log).pack(side="right", padx=5)
 
-        # Lưu ngược ra file yaml (bạn cần viết hàm save trong ConfigLoader hoặc dump thủ công)
-        # Tạm thời chỉ thông báo
-        logger.info("Configuration saved (In Memory) - Ready to run.")
-        # Nếu muốn lưu file thật: Bạn cần implement method save() trong ConfigLoader
-    
-    def _poll_log_queue(self):
+        # 2. Textbox Log
+        self.console = ctk.CTkTextbox(self.tab_dashboard, font=("Consolas", 12), state="disabled", fg_color="#1e1e1e", text_color="#dcdcdc")
+        self.console.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+
+    # --- TAB 2: INPUT / OUTPUT ---
+    def _ui_io(self):
+        frame = ctk.CTkScrollableFrame(self.tab_io, label_text="Đường dẫn thư mục")
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self.ent_input = self._add_path_row(frame, "Input Videos Folder:", self.cfg.pipeline.input_videos, dir=True)
+        self.ent_output = self._add_path_row(frame, "Final Output Folder:", self.cfg.pipeline.step6_final, dir=True)
+        ctk.CTkLabel(frame, text="--- Các folder tạm (Workspace) ---", text_color="gray").pack(pady=(20,5))
+        self.ent_wav = self._add_path_row(frame, "Step 1 (Wav):", self.cfg.pipeline.step1_wav, dir=True)
+        self.ent_sep = self._add_path_row(frame, "Step 2 (Separated):", self.cfg.pipeline.step2_separated, dir=True)
+        self.ent_srt = self._add_path_row(frame, "Step 3 (SRT Raw):", self.cfg.pipeline.step3_srt_raw, dir=True)
+
+    # --- TAB 3: AI CONFIG ---
+    def _ui_ai(self):
+        frame = ctk.CTkScrollableFrame(self.tab_ai)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self._add_header(frame, "Step 2: Tách Nhạc (Demucs)")
+        self.combo_demucs_model = self._add_combo(frame, "Model:", ["htdemucs", "htdemucs_ft", "mdx_extra_q"], self.cfg.step2.model)
+        self.combo_demucs_dev = self._add_combo(frame, "Device:", ["auto", "cuda", "cpu"], self.cfg.step2.device)
+        self.entry_demucs_jobs = self._add_entry(frame, "Threads (Jobs):", self.cfg.step2.jobs)
+        self._add_header(frame, "Step 3: Nhận diện Sub (SRT)")
+        self.combo_srt_src = self._add_combo(frame, "Nguồn Sub:", ["voice", "image"], self.cfg.step3.srt_source)
+        self.combo_whisper = self._add_combo(frame, "Whisper Model (Voice):", ["base", "small", "medium", "large-v2"], self.cfg.step3.model_size)
+        self.entry_lang = self._add_entry(frame, "Ngôn ngữ nguồn (VD: zh, en, ja):", self.cfg.step3.language)
+        self._add_header(frame, "Cấu hình OCR (Nếu chọn nguồn Sub là Image)")
+        self.entry_ocr_lang = self._add_entry(frame, "Mã ngôn ngữ OCR (VD: ch, en):", self.cfg.step3.image_ocr_lang)
+        self.slider_ocr_interval, _ = self._add_slider(frame, "Quét mỗi X giây:", 0.1, 2.0, self.cfg.step3.image_frame_interval, is_float=True)
+        self._add_header(frame, "Step 4: Dịch thuật")
+        self.entry_target_lang = self._add_entry(frame, "Ngôn ngữ đích (VD: vi, en):", self.cfg.step4.target_lang)
+
+    # --- TAB 4: SUB & MIX ---
+    def _ui_sub_mix(self):
+        frame = ctk.CTkScrollableFrame(self.tab_sub)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self._add_header(frame, "Step 5: Giao diện Subtitle")
+        self.entry_font_size = self._add_entry(frame, "Cỡ chữ:", self.cfg.step5.font_size)
+        self.entry_font_path = self._add_path_row(frame, "Font chữ (.ttf):", self.cfg.step5.font_path, dir=False)
+        self.entry_color = self._add_entry(frame, "Màu chữ (Hex ASS &HAABBGGRR):", str(self.cfg.step5.text_color))
+        ctk.CTkLabel(frame, text="Vùng quét/che sub (ROI Y):").pack(anchor="w", padx=10, pady=5)
+        self.slider_roi_start, _ = self._add_slider(frame, "Bắt đầu (Top %):", 0.0, 1.0, self.cfg.step5.roi_y_start, is_float=True)
+        self.slider_roi_end, _ = self._add_slider(frame, "Kết thúc (Bottom %):", 0.0, 1.0, self.cfg.step5.roi_y_end, is_float=True)
+        self._add_header(frame, "Step 6: TTS & Mix")
+        self.entry_tts_lang = self._add_entry(frame, "Mã ngôn ngữ đọc (gTTS):", self.cfg.step6.tts_lang)
+        self.slider_vol, _ = self._add_slider(frame, "Âm lượng nhạc nền (dB):", -50, 0, self.cfg.step6.bg_volume, is_float=False)
+
+    # --- TAB 5: SYSTEM ---
+    def _ui_sys(self):
+        frame = ctk.CTkScrollableFrame(self.tab_sys)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self.ent_ffmpeg = self._add_path_row(frame, "Đường dẫn FFmpeg:", self.cfg.ffmpeg_bin or "", dir=False)
+        self._add_header(frame, "API Keys (Gemini - Dịch B4)")
+        self.txt_keys = ctk.CTkTextbox(frame, height=100)
+        self.txt_keys.pack(fill="x", padx=10, pady=5)
+        keys_str = ",\n".join(self.cfg.step4.gemini_api_keys)
+        self.txt_keys.insert("0.0", keys_str)
+
+    # ================= HELPERS =================
+    def _add_header(self, parent, text):
+        ctk.CTkLabel(parent, text=text, font=ctk.CTkFont(size=16, weight="bold"), text_color="#3498db").pack(anchor="w", padx=10, pady=(20, 5))
+
+    def _add_path_row(self, parent, label, value, dir=True):
+        f = ctk.CTkFrame(parent, fg_color="transparent"); f.pack(fill="x", padx=5, pady=2)
+        ctk.CTkLabel(f, text=label, width=150, anchor="w").pack(side="left")
+        ent = ctk.CTkEntry(f); ent.pack(side="left", fill="x", expand=True, padx=5); ent.insert(0, str(value))
+        def pick():
+            path = filedialog.askdirectory(title="Chọn thư mục") if dir else filedialog.askopenfilename(title="Chọn file")
+            if path: ent.delete(0, "end"); ent.insert(0, path)
+        ctk.CTkButton(f, text="📂", width=40, fg_color="#34495e", hover_color="#2c3e50", command=pick).pack(side="right")
+        return ent
+
+    def _add_entry(self, parent, label, value):
+        f = ctk.CTkFrame(parent, fg_color="transparent"); f.pack(fill="x", padx=5, pady=2)
+        ctk.CTkLabel(f, text=label, width=200, anchor="w").pack(side="left")
+        ent = ctk.CTkEntry(f); ent.pack(side="left", fill="x", expand=True); ent.insert(0, str(value))
+        return ent
+
+    def _add_combo(self, parent, label, values, value):
+        f = ctk.CTkFrame(parent, fg_color="transparent"); f.pack(fill="x", padx=5, pady=2)
+        ctk.CTkLabel(f, text=label, width=200, anchor="w").pack(side="left")
+        cb = ctk.CTkOptionMenu(f, values=values); cb.pack(side="left", fill="x", expand=True); cb.set(str(value))
+        return cb
+
+    def _add_slider(self, parent, label, vmin, vmax, val, is_float=False):
+        f = ctk.CTkFrame(parent, fg_color="transparent"); f.pack(fill="x", padx=5, pady=2)
+        ctk.CTkLabel(f, text=label, width=200, anchor="w").pack(side="left")
+        lbl = ctk.CTkLabel(f, text=str(val), width=50); lbl.pack(side="right")
+        def update(v): lbl.configure(text="{:.2f}".format(v) if is_float else "{:.0f}".format(v))
+        sl = ctk.CTkSlider(f, from_=vmin, to=vmax, command=update); sl.set(val); sl.pack(side="left", fill="x", expand=True, padx=10)
+        return sl, lbl
+
+    def _load_values_to_ui(self): pass
+
+    # --- XỬ LÝ LOG ---
+    def _poll_log(self):
         try:
             while True:
                 msg = self.log_queue.get_nowait()
-                self.log_box.configure(state="normal")
-                self.log_box.insert("end", msg + "\n")
-                self.log_box.see("end")
-                self.log_box.configure(state="disabled")
-        except queue.Empty:
-            pass
-        self.after(100, self._poll_log_queue)
+                self.console.configure(state="normal")
+                self.console.insert("end", msg + "\n")
+                self.console.see("end")
+                self.console.configure(state="disabled")
+        except queue.Empty: pass
+        self.after(100, self._poll_log)
 
-    def _run_pipeline_thread(self):
+    def _on_clear_log(self):
+        """Xóa sạch nội dung trong textbox log"""
+        self.console.configure(state="normal")
+        self.console.delete("0.0", "end")
+        self.console.configure(state="disabled")
+        logger.info("🧹 Log đã được xóa.")
+
+    # --- ACTIONS ---
+    def _on_save_config(self):
         try:
-            logger.info("🚀 Starting Pipeline Engine...")
-            self.lbl_status.configure(text="Running...", text_color="orange")
+            c = self.cfg
+            c.pipeline.input_videos = Path(self.ent_input.get())
+            c.pipeline.step6_final = Path(self.ent_output.get())
+            c.step2.model = self.combo_demucs_model.get()
+            c.step2.device = self.combo_demucs_dev.get()
+            c.step2.jobs = int(self.entry_demucs_jobs.get())
+            c.step3.srt_source = self.combo_srt_src.get()
+            c.step3.model_size = self.combo_whisper.get()
+            c.step3.language = self.entry_lang.get()
+            c.step3.image_ocr_lang = self.entry_ocr_lang.get()
+            c.step3.image_frame_interval = float(self.slider_ocr_interval.get())
+            c.step4.target_lang = self.entry_target_lang.get()
+            c.step5.font_size = int(self.entry_font_size.get())
+            c.step5.font_path = self.entry_font_path.get()
+            c.step5.text_color = self.entry_color.get()
+            c.step5.roi_y_start = float(self.slider_roi_start.get())
+            c.step5.roi_y_end = float(self.slider_roi_end.get())
+            c.step6.tts_lang = self.entry_tts_lang.get()
+            c.step6.bg_volume = float(self.slider_vol.get())
+            c.ffmpeg_bin = self.ent_ffmpeg.get().strip() or None
             
-            # Khởi tạo Engine (Sẽ load config mới nhất)
-            engine = ProEngine()
-            # Override config nếu cần thiết từ GUI memory
-            engine.cfg = self.cfg 
+            keys_raw = self.txt_keys.get("0.0", "end").strip()
+            c.step4.gemini_api_keys = [k.strip() for k in keys_raw.split(",") if k.strip()]
+
+            data = c.model_dump()
+            def path_to_str(d):
+                for k, v in d.items():
+                    if isinstance(v, dict): path_to_str(v)
+                    elif isinstance(v, Path): d[k] = str(v)
+                return d
+            data = path_to_str(data)
             
-            engine.run()
+            with open("config.yaml", "w", encoding="utf-8") as f:
+                yaml.dump(data, f, allow_unicode=True, sort_keys=False)
             
-            logger.success("🏁 Pipeline Finished Successfully.")
-            self.lbl_status.configure(text="Completed", text_color="green")
+            env_content = f"FFMPEG_BIN={c.ffmpeg_bin or ''}\nGEMINI_API_KEYS={','.join(c.step4.gemini_api_keys)}"
+            with open(".env", "w", encoding="utf-8") as f: f.write(env_content)
+
+            messagebox.showinfo("Thành công", "Đã lưu cấu hình!")
         except Exception as e:
-            logger.exception(f"🔥 GUI Error: {e}")
-            self.lbl_status.configure(text="Error", text_color="red")
-        finally:
-            self.is_running = False
-            self.btn_run.configure(state="normal")
-            self.btn_stop.configure(state="disabled")
+            messagebox.showerror("Lỗi Lưu", str(e))
+
+    def _open_output_folder(self):
+        path = self.ent_output.get()
+        if os.path.isdir(path): os.startfile(path)
+        else: messagebox.showwarning("Lỗi", "Thư mục Output chưa tồn tại!")
 
     def _on_start(self):
         if self.is_running: return
+        self._on_save_config()
         self.is_running = True
-        self.btn_run.configure(state="disabled")
-        self.btn_stop.configure(state="normal")
-        
-        # Chạy trong Thread riêng để không đơ GUI
-        t = threading.Thread(target=self._run_pipeline_thread, daemon=True)
-        t.start()
+        self.btn_run.configure(state="disabled", text="ĐANG CHẠY...", fg_color="#e67e22")
+        self.lbl_status.configure(text="PROCESSING...", text_color="#e67e22")
+        threading.Thread(target=self._thread_pipeline, daemon=True).start()
 
-    def _on_stop(self):
-        # Việc dừng ThreadPoolExecutor đang chạy là rất khó.
-        # Cách đơn giản nhất: set cờ exit và để engine tự check (cần sửa engine)
-        # Hoặc restart app.
-        logger.warning("🛑 Stop signal received (Waiting for current tasks to finish)...")
-        self.lbl_status.configure(text="Stopping...", text_color="red")
+    def _thread_pipeline(self):
+        try:
+            engine = ProEngine()
+            engine.cfg = self.cfg
+            engine.run()
+            self.lbl_status.configure(text="COMPLETED", text_color="#2ecc71")
+            messagebox.showinfo("Xong", "Đã xử lý xong!")
+        except Exception as e:
+            logger.exception("Pipeline Error")
+            self.lbl_status.configure(text="ERROR", text_color="#e74c3c")
+            messagebox.showerror("Lỗi", str(e))
+        finally:
+            self.is_running = False
+            self.btn_run.configure(state="normal", text="▶ BẮT ĐẦU XỬ LÝ", fg_color="#27ae60")
 
 if __name__ == "__main__":
     app = ProGUI()

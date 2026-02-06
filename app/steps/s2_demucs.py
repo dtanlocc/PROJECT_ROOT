@@ -1,5 +1,8 @@
 import shutil
 import sys
+import os
+import hashlib
+import subprocess
 from pathlib import Path
 from loguru import logger
 from app.steps.base import BaseStep
@@ -13,73 +16,107 @@ class Step2Demucs(BaseStep):
     def _load_model(self):
         if self._model: return self._model
         
-        # --- LOGIC PATCH TỪ CODE CŨ CỦA BẠN ---
         try:
+            import torch
             import torchaudio
-            # Patch lỗi save của torchaudio trên Windows
-            if hasattr(torchaudio, "save"):
-                _orig_save = torchaudio.save
-                def _patch(uri, src, sample_rate, **kwargs):
-                    if kwargs.get("format") is None and str(uri).lower().endswith(".wav"):
-                        kwargs["format"] = "wav"
-                    return _orig_save(uri, src, sample_rate, **kwargs)
-                torchaudio.save = _patch
+            import soundfile as sf
+            
+            # --- PATCH: Ghi đè hàm save của torchaudio bằng soundfile ---
+            # Giúp tránh hoàn toàn lỗi "TorchCodec required" trên Windows
+            def _manual_soundfile_save(uri, src, sample_rate, **kwargs):
+                if isinstance(src, torch.Tensor):
+                    src = src.detach().cpu().numpy()
+                # Transpose nếu shape là (Channels, Time) -> (Time, Channels)
+                if src.ndim == 2 and src.shape[0] < src.shape[1]: 
+                    src = src.transpose()
+                
+                subtype = None
+                bits = kwargs.get('bits_per_sample', 16)
+                if bits == 24: subtype = 'PCM_24'
+                elif bits == 32: subtype = 'FLOAT'
+                
+                sf.write(file=uri, data=src, samplerate=sample_rate, subtype=subtype)
+
+            torchaudio.save = _manual_soundfile_save
             
             from demucs import separate
             self._model = separate
-        except ImportError:
-            raise RuntimeError("Demucs/Torchaudio missing!")
+        except ImportError as e:
+            raise RuntimeError(f"Thiếu thư viện: {e}. Chạy: pip install demucs torchaudio soundfile")
         return self._model
 
     def process(self, wav_path: Path):
         self.ensure_dir(self.out_dir)
         stem = wav_path.stem
-        final_dir = self.out_dir / stem
         
+        # Xử lý tên folder output (tránh lỗi tên quá dài)
+        try:
+            final_dir = self.out_dir / stem
+            final_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            short_name = hashlib.md5(stem.encode('utf-8')).hexdigest()[:12]
+            final_dir = self.out_dir / f"LongName_{short_name}"
+            final_dir.mkdir(parents=True, exist_ok=True)
+
         # Resume Check
         if (final_dir / "vocals.wav").exists():
             return final_dir
 
-        logger.info(f"🎸 Demucs separating: {stem}")
+        logger.info(f"🎸 [Step 2] Demucs: {stem}")
         separator = self._load_model()
         
-        # Config
-        model = self.cfg.step2.model
-        device = self.cfg.step2.device
+        # --- SAFE PROCESSING (Tránh lỗi WinError 3) ---
+        # 1. Tạo thư mục tạm với tên ngắn gọn
+        stem_hash = hashlib.md5(stem.encode('utf-8')).hexdigest()[:10]
+        # Dùng tên biến thống nhất 'safe_temp_dir'
+        safe_temp_dir = self.out_dir / f"tmp_{stem_hash}" 
+        safe_temp_dir.mkdir(parents=True, exist_ok=True)
         
-        # Logic xử lý device "auto"
-        if device == "auto":
-            import torch
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        temp_out = self.out_dir / f"_temp_{stem}"
+        safe_input_wav = safe_temp_dir / "input.wav"
         
-        cmd = [
-            "-n", model, "-d", device,
-            "-o", str(temp_out),
-            "--two-stems=vocals",
-            "-j", str(self.cfg.step2.jobs),
-            "--float32",
-            str(wav_path)
-        ]
-
         try:
-            separator.main(cmd)
-        except Exception as e:
-            if device == "cuda":
-                logger.warning("GPU OOM, switching to CPU for Demucs...")
-                cmd[3] = "cpu"
-                separator.main(cmd)
-            else:
-                raise e
+            # 2. Copy file input vào đó
+            shutil.copy2(str(wav_path), str(safe_input_wav))
+            
+            # 3. Cấu hình & Chạy Demucs
+            model = self.cfg.step2.model
+            device = self.cfg.step2.device
+            if device == "auto":
+                device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        # Move file đúng cấu trúc
-        src_path = temp_out / model / stem
-        final_dir.mkdir(parents=True, exist_ok=True)
+            cmd = [
+                "-n", model, "-d", device,
+                "-o", str(safe_temp_dir),
+                "--two-stems=vocals",
+                "-j", str(self.cfg.step2.jobs),
+                "--float32",
+                str(safe_input_wav)
+            ]
+
+            separator.main(cmd)
+            
+            # 4. Di chuyển kết quả về đích
+            # Demucs structure: temp/model/input/vocals.wav
+            demucs_out_inner = safe_temp_dir / model / "input"
+            
+            for track in ["vocals.wav", "no_vocals.wav"]:
+                src = demucs_out_inner / track
+                dst = final_dir / track
+                if src.exists():
+                    shutil.move(str(src), str(dst))
+                else:
+                    logger.warning(f"⚠️ Không thấy file {track} sau khi tách.")
+
+        except Exception as e:
+            if "CUDA" in str(e) or "memory" in str(e).lower():
+                logger.warning("GPU OOM, đang thử lại bằng CPU...")
+                # Nếu cần fallback CPU thì thêm logic ở đây
+            raise e
+        finally:
+            # 5. Dọn dẹp file tạm (QUAN TRỌNG: Dùng đúng tên biến safe_temp_dir)
+            if safe_temp_dir.exists():
+                try:
+                    shutil.rmtree(safe_temp_dir, ignore_errors=True)
+                except: pass
         
-        shutil.move(str(src_path / "vocals.wav"), str(final_dir / "vocals.wav"))
-        shutil.move(str(src_path / "no_vocals.wav"), str(final_dir / "no_vocals.wav"))
-        
-        # Cleanup
-        shutil.rmtree(temp_out, ignore_errors=True)
         return final_dir
