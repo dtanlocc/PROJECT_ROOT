@@ -1,0 +1,25 @@
+# Core
+pydantic>=2.0.0
+loguru>=0.7.0
+pyyaml>=6.0
+python-dotenv==1.2.1
+tqdm
+colorama
+
+# AI & Processing
+demucs==4.0.1
+soundfile==0.13.1
+faster-whisper==1.2.1
+paddlepaddle-gpu==2.6.1
+paddleocr==2.7.3
+google-generativeai>=0.3.0
+deep-translator>=1.11.0
+gTTS==2.5.4
+pydub==0.25.1
+pysrt==1.1.2
+opencv-python-headless
+numpy
+protobuf==3.20.2
+
+# GUI
+customtkinter

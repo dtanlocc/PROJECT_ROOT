@@ -1,0 +1,57 @@
+workspace_root: .
+
+pipeline:
+  input_videos: "input"
+  step1_wav: "workspace/01_wav"
+  step2_separated: "workspace/02_separated"
+  step3_srt_raw: "workspace/03_srt_raw"
+  step4_srt_translated: "workspace/04_srt_translated"
+  step5_video_subbed: "workspace/05_video_subbed"
+  step6_final: "output"
+  step6_voices_cache: "workspace/06_voices"
+
+ffmpeg:
+  # Để trống sẽ tự tìm trong PATH hoặc biến môi trường FFMPEG_BIN
+  bin_path: ""
+
+step1:
+  sample_rate: 16000
+  channels: 1
+
+step2:
+  model: "htdemucs"
+  device: "auto"  # auto, cuda, cpu
+  jobs: 1
+  two_stems: true
+
+step3:
+  srt_source: "voice" # voice (Whisper) hoặc image (OCR)
+  model_size: "medium"
+  device: "cuda"
+  language: "zh"
+  # Cấu hình riêng cho mode image
+  image_ocr_lang: "ch"
+  image_frame_interval: 0.5
+
+step4:
+  service: "free" # free hoặc gemini
+  source_lang: "zh-CN"
+  target_lang: "vi"
+  gemini_api_keys: []
+
+step5:
+  ocr_lang: "ch"
+  roi_y_start: 0.5
+  roi_y_end: 0.9
+  font_path: "C:/Windows/Fonts/arialbd.ttf"
+  font_size: 55
+  text_color: [255, 255, 255, 255]
+  outline_color: [0, 0, 0, 255]
+  max_workers: 2
+
+step6:
+  tts_lang: "vi"
+  music_volume: 0.32
+  tts_volume: 1.4
+  extra_voice_volume: 0.2
+  max_workers: 1
