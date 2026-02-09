@@ -10,6 +10,17 @@ if str(ROOT) not in sys.path:
 # Chuyển thư mục làm việc về ROOT (để load config.yaml đúng)
 os.chdir(ROOT)
 
+# Tqdm gọn hơn khi chạy trong GUI (ít dòng log, cập nhật tối đa mỗi 0.5s)
+try:
+    import tqdm
+    tqdm.tqdm.mininterval = 0.5
+    tqdm.tqdm.dynamic_ncols = False
+    tqdm.tqdm.ncols = 88
+    if not sys.stdout.isatty():
+        tqdm.tqdm.bar_format = "{l_bar}{bar:20}{r_bar}"
+except Exception:
+    pass
+
 if __name__ == "__main__":
     try:
         # Import GUI từ package app

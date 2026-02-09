@@ -14,13 +14,17 @@ class Step2Config(BaseModel):
     device: str = "auto"
     jobs: int = 1
     two_stems: bool = True
+    shifts: int = 2  # Số lần shift tách (như demucs.py --shifts=2, tăng chất lượng)
+    output_float32: bool = False  # False = --int24 (như demucs.py), True = --float32
 
 class Step3Config(BaseModel):
     srt_source: str = "voice"
     model_size: str = "large-v2"
     device: str = "cuda"
     language: str = "zh"
-    image_frame_interval: float = 0.5
+    cpu_threads: int = 1  # Whisper CPU threads (như voice-to-srt NB_THREADS)
+    image_frame_interval: float = 0.5  # Fallback khi image_step_frames <= 0
+    image_step_frames: int = 10  # Cứ N frame lấy 1 lần (như img-to-srt STEP_FRAME)
     image_ocr_lang: str = "ch"
     image_use_gpu: bool = True
     similarity_threshold: float = 0.7
@@ -32,44 +36,39 @@ class Step4Config(BaseModel):
     source_lang: str = "zh-CN"
     target_lang: str = "vi"
     gemini_api_keys: List[str] = []
+    max_lines_per_chunk: int = 250  # Chunk theo số dòng (như dich_srt MAX_LINES_PER_CHUNK)
 
 class Step5Config(BaseModel):
     ocr_lang: str = "ch"
     roi_y_start: float = 0.5
     roi_y_end: float = 0.9
     font_path: str = ""
-    font_size: int = 18
-    # Cho phép nhập List[int] hoặc String
-    text_color: Union[List[int], str] = "&H00FFFFFF" 
-    outline_color: Union[List[int], str] = "&H00000000"
+    font_size: int = 45  # Target size như che_sub-B5 (chỉ thu nhỏ khi tràn)
+    max_words_per_line: int = 10  # Số từ tối đa mỗi dòng (cố định kích thước hiển thị)
+    # Cho phép nhập List [R,G,B,A] hoặc chuỗi ASS &HAABBGGRR. Mặc định: vàng chữ, đen viền.
+    text_color: Union[List[int], str] = [255, 255, 0, 255]
+    outline_color: Union[List[int], str] = [0, 0, 0, 255]
 
-    # --- VALIDATOR: Tự động chuyển List [r,g,b,a] sang Hex String ASS ---
+    # --- VALIDATOR: Tự động chuyển List [r,g,b,a] sang Hex String ASS (lưu nội bộ) ---
     @field_validator('text_color', 'outline_color')
     @classmethod
     def convert_rgba_to_ass(cls, v: Any) -> str:
-        # Nếu người dùng đã nhập string đúng chuẩn (VD: &H00FFFFFF) thì giữ nguyên
-        if isinstance(v, str):
+        if isinstance(v, str) and str(v).strip().upper().startswith("&H"):
             return v
-        
-        # Nếu là List [R, G, B, A]
         if isinstance(v, list) and len(v) >= 3:
-            r = v[0]
-            g = v[1]
-            b = v[2]
-            # Alpha trong config: 255 là hiện rõ, 0 là trong suốt
-            # Alpha trong ASS: 00 là hiện rõ, FF là trong suốt -> Cần đảo ngược
-            a = v[3] if len(v) > 3 else 255 
+            r, g, b = v[0], v[1], v[2]
+            a = v[3] if len(v) > 3 else 255
             ass_a = 255 - a
-            
-            # Format ASS là &H(Alpha)(Blue)(Green)(Red) - Lưu ý thứ tự BGR
             return f"&H{ass_a:02X}{b:02X}{g:02X}{r:02X}"
-            
-        return "&H00FFFFFF" # Fallback màu trắng
+        return "&H0000FFFF"  # Fallback vàng (R255 G255 B0)
 
 class Step6Config(BaseModel):
     tts_lang: str = "vi"
     bg_volume: float = -12.0  # dB (VD: -12.0 = giảm 12dB)
-    pitch_factor: float = 1.0  # 1.0 = giữ nguyên, 1.2 = cao hơn (như bản gốc)
+    pitch_factor: float = 1.0  # 1.0 = giữ nguyên, 1.2 = cao hơn (như text-to-voice)
+    tts_volume: float = 1.4  # Âm lượng TTS khi mix (như text-to-voice TTS_VOLUME)
+    min_words_for_tts: int = 0  # 0 = tắt; nếu > 0 và câu ít từ thì lặp text cho TTS rồi cắt lại
+    speedup_when_short: float = 1.5  # Khi TTS ngắn hơn slot: speed up rồi pad (như text-to-voice)
 
 class PipelineConfig(BaseModel):
     workspace_root: Path = Path(".")

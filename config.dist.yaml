@@ -28,17 +28,20 @@ step2:
   device: cuda
   jobs: 1
   two_stems: true
+  shifts: 2
+  output_float32: false
 
 step3:
   srt_source: voice
   model_size: large-v2
   device: cuda
   language: zh
-  image_frame_interval: 0.5
+  image_step_frames: 10   # Cứ N frame lấy 1 lần (Image OCR). VD: 10 = như img-to-srt
+  image_frame_interval: 0.5  # Chỉ dùng khi image_step_frames = 0
   image_ocr_lang: ch
   image_use_gpu: true
   similarity_threshold: 0.7
-  image_min_duration_ms: 300
+  image_min_duration_ms: 250
   image_confidence_threshold: 0.5
 
 step4:
@@ -46,17 +49,22 @@ step4:
   source_lang: zh-CN
   target_lang: vi
   gemini_api_keys: []
+  max_lines_per_chunk: 250
 
 step5:
   ocr_lang: ch
   roi_y_start: 0.5
   roi_y_end: 0.9
   font_path: ""
-  font_size: 18
-  text_color: "&H00FFFFFF"
-  outline_color: "&H00000000"
+  font_size: 45
+  max_words_per_line: 10
+  text_color: [255, 255, 0, 255]
+  outline_color: [0, 0, 0, 255]
 
 step6:
   tts_lang: vi
   bg_volume: -12.0
   pitch_factor: 1.0
+  tts_volume: 1.4
+  min_words_for_tts: 0
+  speedup_when_short: 1.5

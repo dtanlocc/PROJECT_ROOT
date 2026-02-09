@@ -4,3 +4,14 @@ venv
 
 steps
 pipeline
+
+workspace
+
+t.txt
+output
+logs
+input
+image
+failed
+done
+check.py

@@ -38,7 +38,7 @@ python -m pip install --upgrade pip
 
 echo.
 echo [1/3] PyTorch GPU (CUDA 11.8)...
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
 if errorlevel 1 (
     echo [LOI] PyTorch that bai. Thu setup_venv_cpu.bat.
     pause
