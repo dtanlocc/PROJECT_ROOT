@@ -89,9 +89,10 @@ class ProGUI(ctk.CTk):
         self.hw_color = "gray"
         self._check_hardware()
 
-        # 3. LOAD CONFIG
+        # 3. LOAD CONFIG & INSTALL MODE (CPU / GPU / Cả hai)
         try:
             self.cfg = ConfigLoader.load()
+            self.install_mode = ConfigLoader.get_install_mode()
         except Exception as e:
             messagebox.showerror("Config Error", f"Lỗi đọc config: {e}")
             sys.exit(1)
@@ -178,6 +179,8 @@ class ProGUI(ctk.CTk):
         info_frame.grid(row=1, column=0, padx=15, pady=(0, 20), sticky="ew")
         ctk.CTkLabel(info_frame, text="● LICENSE: ACTIVE", text_color="#2ecc71", font=ctk.CTkFont(size=12, weight="bold")).pack(pady=(10, 2))
         ctk.CTkLabel(info_frame, text=f"● VERSION: {__version__}", text_color="#3498db", font=ctk.CTkFont(size=12, weight="bold")).pack(pady=2)
+        install_label = "Chỉ CPU" if self.install_mode == "cpu" else ("GPU (có thể chọn CPU)" if self.install_mode == "both" else "GPU")
+        ctk.CTkLabel(info_frame, text=f"● CÀI ĐẶT: {install_label}", text_color="#9b59b6", font=ctk.CTkFont(size=12, weight="bold")).pack(pady=2)
         ctk.CTkLabel(info_frame, text=f"● {self.hw_info}", text_color=self.hw_color, font=ctk.CTkFont(size=12, weight="bold")).pack(pady=(2, 10))
 
         # Buttons
@@ -255,7 +258,8 @@ class ProGUI(ctk.CTk):
         frame.pack(fill="both", expand=True, padx=10, pady=10)
         self._add_header(frame, "Step 2: Tách Nhạc (Demucs)")
         self.combo_demucs_model = self._add_combo(frame, "Model:", ["htdemucs", "htdemucs_ft", "mdx_extra_q"], self.cfg.step2.model)
-        self.combo_demucs_dev = self._add_combo(frame, "Device:", ["auto", "cuda", "cpu"], self.cfg.step2.device)
+        demucs_dev_values = ["cpu"] if self.install_mode == "cpu" else ["auto", "cuda", "cpu"]
+        self.combo_demucs_dev = self._add_combo(frame, "Device:", demucs_dev_values, self.cfg.step2.device)
         self.entry_demucs_jobs = self._add_entry(frame, "Threads (Jobs):", self.cfg.step2.jobs)
         self.entry_demucs_shifts = self._add_entry(frame, "Shifts (chất lượng tách, VD: 2):", getattr(self.cfg.step2, "shifts", 2))
         self.combo_demucs_output = self._add_combo(

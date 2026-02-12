@@ -17,16 +17,22 @@ PROJECT_ROOT/
 ├── run_cli.py              # CLI: full pipeline hoặc --list
 ├── run.py                  # Entry point in log ra file
 ├── requirements.txt        # Thư viện (trừ Torch/Paddle)
-├── setup_venv.bat          # Cài GPU (CUDA 11.8)
-├── setup_venv_cpu.bat      # Cài CPU (tránh lỗi shm.dll)
+├── install_mode.txt       # cpu | gpu | both (do setup ghi khi cài)
+├── setup_venv.bat         # Cài đặt: chọn 1=CPU, 2=GPU, 3=Cả hai
+├── setup_venv_cpu.bat     # Cài bản chỉ CPU (không cần NVIDIA)
+├── setup_venv_gpu.bat     # Cài bản chỉ GPU (CUDA)
 └── pipeline/               # Project cũ (legacy), tham khảo
 ```
 
 ## Cách dùng
 
 1. **Cài môi trường**
-   - GPU: `setup_venv.bat` (PyTorch + PaddlePaddle CUDA 11.8)
-   - CPU: `setup_venv_cpu.bat` nếu gặp lỗi shm.dll
+   - Chạy `setup_venv.bat` và chọn:
+     - **1 = Chỉ CPU** — nhẹ, không cần NVIDIA/CUDA (Demucs + Whisper + OCR chạy CPU).
+     - **2 = Chỉ GPU** — cài PyTorch + PaddlePaddle GPU (CUDA), nhanh hơn.
+     - **3 = Cả hai** — cài bản GPU; trong app có thể chọn Auto / CPU / GPU cho từng bước.
+   - Hoặc chạy trực tiếp: `setup_venv_cpu.bat` (chỉ CPU) hoặc `setup_venv_gpu.bat` (chỉ GPU).
+   - File `install_mode.txt` (cpu/gpu/both) được ghi theo lựa chọn; app sẽ ép device cho phù hợp (vd. chọn CPU thì FFmpeg và AI đều dùng CPU).
 
 2. **Cấu hình**
    - Copy `config.dist.yaml` → `config.yaml` (nếu chưa có).

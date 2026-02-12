@@ -1,5 +1,6 @@
 import sys
 import os
+import warnings
 from pathlib import Path
 
 # Thêm thư mục hiện tại vào sys.path để Python tìm thấy package 'app'
@@ -9,6 +10,20 @@ if str(ROOT) not in sys.path:
 
 # Chuyển thư mục làm việc về ROOT (để load config.yaml đúng)
 os.chdir(ROOT)
+
+# Tắt cảnh báo Hugging Face Hub: symlinks trên Windows (cache vẫn hoạt động)
+if "HF_HUB_DISABLE_SYMLINKS_WARNING" not in os.environ:
+    os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+# Ẩn cảnh báo "unauthenticated requests" (tải model vẫn bình thường; đặt HF_TOKEN nếu muốn rate limit cao hơn)
+warnings.filterwarnings("ignore", message=".*unauthenticated requests to the HF Hub.*", category=UserWarning)
+
+# Ép FFmpeg dùng CPU nếu lúc cài đã chọn "Chỉ CPU"
+try:
+    from app.core.config_loader import ConfigLoader
+    if ConfigLoader.get_install_mode() == "cpu":
+        os.environ["PIPELINE_FORCE_CPU"] = "1"
+except Exception:
+    pass
 
 # Tqdm gọn hơn khi chạy trong GUI (ít dòng log, cập nhật tối đa mỗi 0.5s)
 try:

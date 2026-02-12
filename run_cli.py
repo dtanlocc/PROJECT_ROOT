@@ -7,12 +7,26 @@ Pipeline Reup Pro v2 - CLI.
 import sys
 import os
 import argparse
+import warnings
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)
+
+# Tắt cảnh báo Hugging Face Hub
+if "HF_HUB_DISABLE_SYMLINKS_WARNING" not in os.environ:
+    os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+warnings.filterwarnings("ignore", message=".*unauthenticated requests to the HF Hub.*", category=UserWarning)
+
+# Ép FFmpeg dùng CPU nếu lúc cài đã chọn "Chỉ CPU"
+try:
+    from app.core.config_loader import ConfigLoader
+    if ConfigLoader.get_install_mode() == "cpu":
+        os.environ["PIPELINE_FORCE_CPU"] = "1"
+except Exception:
+    pass
 
 from loguru import logger
 

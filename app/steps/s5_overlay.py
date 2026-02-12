@@ -213,14 +213,15 @@ class Step5Overlay(BaseStep):
         calculated_bitrate = "2M"
         max_bitrate = "4M"
         buf_size = "6M"
-        encodings = [
-            [
+        force_cpu = os.environ.get("PIPELINE_FORCE_CPU") == "1"
+        encodings = []
+        if not force_cpu:
+            encodings.append([
                 "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "22",
                 "-b:v", calculated_bitrate, "-maxrate", max_bitrate, "-bufsize", buf_size,
                 "-profile:v", "high", "-pix_fmt", "yuv420p",
-            ],
-            ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "22", "-pix_fmt", "yuv420p"],
-        ]
+            ])
+        encodings.append(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "22", "-pix_fmt", "yuv420p"])
         proc = None
         for enc in encodings:
             cmd = [

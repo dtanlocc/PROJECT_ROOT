@@ -1,4 +1,5 @@
 import subprocess
+import os
 from pathlib import Path
 from loguru import logger
 from app.steps.base import BaseStep
@@ -18,12 +19,20 @@ class Step1Normalize(BaseStep):
         if out_path.exists() and out_path.stat().st_size > 0:
             return out_path
 
+        video_path = Path(video_path)
+        if not video_path.exists():
+            raise FileNotFoundError(f"File video không tồn tại: {video_path}")
+        if not Path(self.ffmpeg.bin).exists() and os.path.sep in self.ffmpeg.bin:
+            raise FileNotFoundError(
+                f"Không tìm thấy FFmpeg tại: {self.ffmpeg.bin}. "
+                "Vào Cấu hình > Hệ thống sửa đường dẫn FFmpeg hoặc cài FFmpeg và thêm vào PATH."
+            )
+
         logger.info(f"🔊 [Step 1] Normalize: {video_path.name}")
         
         sr = self.cfg.step1.sample_rate
         channels = self.cfg.step1.channels
 
-        # Lệnh nguyên bản từ step1_normalize_audio.py
         cmd = [
             self.ffmpeg.bin, "-y", 
             "-i", str(video_path),
@@ -34,5 +43,17 @@ class Step1Normalize(BaseStep):
             str(out_path)
         ]
         
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+        try:
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                "Không tìm thấy FFmpeg. Vào Cấu hình > Hệ thống đặt đường dẫn tới ffmpeg.exe hoặc thêm FFmpeg vào PATH."
+            )
+        except OSError as e:
+            if getattr(e, "winerror", None) == 2:
+                raise FileNotFoundError(
+                    "Hệ thống không tìm thấy FFmpeg (WinError 2). "
+                    "Kiểm tra đường dẫn FFmpeg trong Cấu hình > Hệ thống hoặc cài FFmpeg và thêm vào PATH."
+                ) from e
+            raise
         return out_path

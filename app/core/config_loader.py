@@ -97,6 +97,9 @@ class GlobalConfig(BaseModel):
 class ConfigLoader:
     _instance = None
 
+    # File lưu lựa chọn khi cài: cpu | gpu | both (do setup_venv*.bat ghi)
+    INSTALL_MODE_FILE = "install_mode.txt"
+
     @classmethod
     def _resolve_config_path(cls, config_path: str) -> Path:
         """Tìm file config: ưu tiên config_path, không có thì dùng config.dist.yaml."""
@@ -107,6 +110,24 @@ class ConfigLoader:
         if dist.exists():
             return dist
         return p
+
+    @classmethod
+    def get_install_mode(cls, config_path: str = "config.yaml") -> str:
+        """
+        Đọc chế độ cài đặt từ install_mode.txt (do setup chọn CPU/GPU/Cả hai).
+        Trả về: "cpu" | "gpu" | "both". Mặc định "both" nếu không có file.
+        """
+        resolved = cls._resolve_config_path(config_path)
+        mode_file = resolved.parent / cls.INSTALL_MODE_FILE
+        if not mode_file.exists():
+            return "both"
+        try:
+            raw = mode_file.read_text(encoding="utf-8").strip().lower()
+            if raw in ("cpu", "gpu", "both"):
+                return raw
+        except Exception:
+            pass
+        return "both"
 
     @classmethod
     def load(cls, config_path="config.yaml") -> GlobalConfig:
@@ -130,4 +151,20 @@ class ConfigLoader:
         if ffmpeg_env:
             raw["ffmpeg_bin"] = ffmpeg_env
 
-        return GlobalConfig(**raw)
+        cfg = GlobalConfig(**raw)
+
+        # Áp dụng chế độ cài đặt: nếu chọn "cpu" thì ép mọi bước dùng CPU
+        install_mode = cls.get_install_mode(config_path)
+        if install_mode == "cpu":
+            if "step2" not in raw:
+                raw["step2"] = {}
+            raw["step2"]["device"] = "cpu"
+            cfg.step2.device = "cpu"
+            if "step3" not in raw:
+                raw["step3"] = {}
+            raw["step3"]["device"] = "cpu"
+            raw["step3"]["image_use_gpu"] = False
+            cfg.step3.device = "cpu"
+            cfg.step3.image_use_gpu = False
+
+        return cfg

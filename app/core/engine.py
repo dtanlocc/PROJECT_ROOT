@@ -85,6 +85,28 @@ class ProEngine:
             cur = list(self._progress_current.values())
             self._on_progress_cb(self._progress_completed, self._progress_total, cur)
 
+    def _report_step_ratio(self, step_name: str, safe_stem: str, ratio: float):
+        """
+        Gửi tiến độ chi tiết của một bước (vd. B3 Transcribe) ra GUI mà không làm tăng completed.
+        ratio: 0.0–1.0 cho video hiện tại.
+        """
+        if self._on_progress_cb is None or self._progress_total <= 0:
+            return
+        try:
+            ratio_val = float(ratio)
+        except Exception:
+            return
+        if ratio_val < 0.0:
+            ratio_val = 0.0
+        if ratio_val > 1.0:
+            ratio_val = 1.0
+        with self._progress_lock:
+            # Không cộng vào _progress_completed, chỉ điều chỉnh view cho video hiện tại
+            self._progress_current[safe_stem] = f"{step_name} {int(ratio_val * 100)}%"
+            cur = list(self._progress_current.values())
+            effective_completed = self._progress_completed + ratio_val
+            self._on_progress_cb(effective_completed, self._progress_total, cur)
+
     def _get_s2(self):
         if self._s2 is None:
             from app.steps.s2_demucs import Step2Demucs
@@ -153,8 +175,15 @@ class ProEngine:
             
             self._report_progress("B3 Transcribe", safe_stem)
             input_s3 = safe_video_path if self.cfg.step3.srt_source == "image" else sep_dir
+
+            def _b3_progress(ratio: float):
+                try:
+                    self._report_step_ratio("B3 Transcribe", safe_stem, ratio)
+                except Exception:
+                    pass
+
             with self.gpu_lock:
-                srt_raw = self._get_s3().process(input_s3)
+                srt_raw = self._get_s3().process(input_s3, on_progress=_b3_progress)
                 
             self._report_progress("B4 Translate", safe_stem)
             srt_trans = self._get_s4().process(srt_raw)
