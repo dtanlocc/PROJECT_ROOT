@@ -12,20 +12,16 @@ from app import __version__
 from app.core.config_loader import ConfigLoader
 from app.core.engine import ProEngine, is_shm_dll_error, SHM_FIX_MESSAGE, is_meth_static_error, METH_FIX_MESSAGE
 
-# 1. Hàm tìm đường dẫn tài nguyên (Dù chạy code hay chạy exe đều tìm thấy)
+# 1. Hàm tìm đường dẫn tài nguyên
 def resource_path(relative_path):
     """Lấy đường dẫn tuyệt đối tới tài nguyên, hoạt động cho cả Dev và PyInstaller/Nuitka"""
     try:
-        # PyInstaller/Nuitka tạo ra thư mục tạm này
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
-
     return os.path.join(base_path, relative_path)
 
-
 def _ass_to_rgb(ass_str):
-    """Parse ASS &HAABBGGRR -> (r, g, b). Config lưu ASS sau khi load."""
     if not ass_str or not isinstance(ass_str, str) or not str(ass_str).strip().upper().startswith("&H"):
         return (255, 255, 0)
     try:
@@ -38,9 +34,7 @@ def _ass_to_rgb(ass_str):
         pass
     return (255, 255, 0)
 
-
 def _ass_to_rgba_list(ass_str):
-    """Parse ASS &HAABBGGRR -> [r, g, b, a] để ghi YAML dạng list."""
     if not ass_str or not isinstance(ass_str, str) or not str(ass_str).strip().upper().startswith("&H"):
         return [255, 255, 0, 255]
     try:
@@ -54,16 +48,13 @@ def _ass_to_rgba_list(ass_str):
         pass
     return [255, 255, 0, 255]
 
-
 def _set_entry(ent: ctk.CTkEntry, value):
     ent.delete(0, "end")
     ent.insert(0, str(value))
 
-
 def _set_textbox(tb: ctk.CTkTextbox, value: str):
     tb.delete("0.0", "end")
     tb.insert("0.0", value)
-
 
 def _rgb_hex(r: int, g: int, b: int) -> str:
     return "#{:02x}{:02x}{:02x}".format(int(r) & 255, int(g) & 255, int(b) & 255)
@@ -73,12 +64,11 @@ ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
 class LogSink:
-    """Hứng log từ Loguru đưa vào Queue để hiển thị lên GUI"""
     def __init__(self, q): self.q = q
     def write(self, msg): self.q.put(msg)
+    def flush(self): pass
 
 class StreamToLogger:
-    """Bắt cóc thanh tiến trình (tqdm) đưa vào log"""
     def __init__(self, level="INFO"):
         self.level = level
     def write(self, buffer):
@@ -90,22 +80,26 @@ class ProGUI(ctk.CTk):
     def __init__(self):
         super().__init__()
         
+        # [FIX] Cờ kiểm soát vòng đời ứng dụng
+        self.is_running = True
+        self.poll_log_id = None # ID để hủy lệnh after nếu cần
+
         # 1. SETUP CỬA SỔ
         self.title(f"Pipeline Reup Pro v{__version__}")
         self.geometry("1280x850")
         self.minsize(1100, 750)
+        
+        # [FIX] Bắt sự kiện đóng cửa sổ để dừng luồng an toàn
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
         icon_path = resource_path(os.path.join("app", "assets", "icon.ico"))
-        # Kiểm tra nếu file tồn tại mới set để tránh lỗi crash
         if os.path.exists(icon_path):
             self.iconbitmap(icon_path)
-            # Dòng này giúp icon hiện cả trên thanh Taskbar Windows riêng biệt
             try:
-                # App ID giúp Windows gom nhóm cửa sổ đúng icon
                 from ctypes import windll
                 myappid = 'mycompany.myproduct.subproduct.version' 
                 windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-            except:
-                pass
+            except: pass
         else:
             print(f"⚠️ Warning: Không tìm thấy icon tại {icon_path}")
         
@@ -115,8 +109,7 @@ class ProGUI(ctk.CTk):
         self._check_hardware()
         self.last_stream_index = None
         
-
-        # 3. LOAD CONFIG & INSTALL MODE (CPU / GPU / Cả hai)
+        # 3. LOAD CONFIG & INSTALL MODE
         try:
             self.cfg = ConfigLoader.load()
             self.install_mode = ConfigLoader.get_install_mode()
@@ -134,7 +127,6 @@ class ProGUI(ctk.CTk):
 
         # 5. TRẠNG THÁI ENGINE & PROGRESS
         self.engine = None
-        self.is_running = False
         self._progress_queue = queue.Queue()
         self._progress_display = {"completed": 0, "total": 0, "current": []}
 
@@ -142,18 +134,106 @@ class ProGUI(ctk.CTk):
         self._init_layout()
         self._load_values_to_ui()
 
-        # --- ĐỊNH NGHĨA TAG MÀU SẮC (Cực kỳ quan trọng) ---
-        self.console.tag_config("info", foreground="#dcdcdc")      # Trắng xám
-        self.console.tag_config("success", foreground="#2ecc71")   # Xanh lá
-        self.console.tag_config("error", foreground="#e74c3c")     # Đỏ
-        self.console.tag_config("warning", foreground="#f1c40f")   # Vàng
-        self.console.tag_config("debug", foreground="#7f8c8d")     # Xám (Thanh Bar)
-        self.console.tag_config("step", foreground="#3498db")      # Xanh dương
+        # --- ĐỊNH NGHĨA TAG MÀU SẮC LOG ---
+        self.console.tag_config("info", foreground="#dcdcdc")      
+        self.console.tag_config("success", foreground="#2ecc71")   
+        self.console.tag_config("error", foreground="#e74c3c")     
+        self.console.tag_config("warning", foreground="#f1c40f")   
+        self.console.tag_config("debug", foreground="#7f8c8d")     
+        self.console.tag_config("step", foreground="#3498db")      
 
-        self.active_streams = {} # Để quản lý ghi đè dòng
+        self.active_streams = {} 
         
-        # 7. LOOP LOG
-        self.after(100, self._poll_log)
+        # 7. LOOP LOG (Bắt đầu sau 100ms)
+        self.poll_log_id = self.after(100, self._safe_poll_log) # Gọi qua wrapper an toàn
+
+    def on_closing(self):
+        """Hàm xử lý khi tắt ứng dụng"""
+        self.is_running = False # Ngắt cờ để dừng vòng lặp after
+        
+        # Hủy các lệnh after đang chờ
+        if self.poll_log_id:
+            try:
+                self.after_cancel(self.poll_log_id)
+            except: pass
+            
+        self.destroy() # Hủy giao diện
+        sys.exit(0) # Thoát hẳn python
+
+    def _safe_poll_log(self):
+        """Wrapper an toàn để gọi _poll_log và bắt ngoại lệ widget"""
+        if not self.is_running: return
+        try:
+            self._poll_log()
+        except Exception:
+            pass # Bỏ qua lỗi nếu widget bị hủy giữa chừng
+        finally:
+            if self.is_running:
+                try:
+                    self.poll_log_id = self.after(30, self._safe_poll_log)
+                except: pass
+
+    def _poll_log(self):
+        """Logic cập nhật Log và Progress thực tế"""
+        if not self.winfo_exists(): return 
+
+        # 1. Xử lý Progress Bar tổng
+        try:
+            while not self._progress_queue.empty():
+                item = self._progress_queue.get_nowait()
+                if item[0] == "progress":
+                    _, (completed, total, current) = item
+                    self._update_progress_ui(completed, total, current)
+        except: pass
+
+        # 2. Xử lý Console Log
+        try:
+            if not self.console.winfo_exists(): return 
+
+            self.console.configure(state="normal")
+            has_new_log = False
+            
+            while not self.log_queue.empty():
+                msg = self.log_queue.get_nowait()
+                has_new_log = True
+                
+                # Logic xử lý Stream/Log
+                if msg.startswith("[STREAM]"):
+                    parts = [p.strip() for p in msg.split("|")]
+                    if len(parts) >= 3:
+                        video_id = parts[1]
+                        content = " | ".join(parts[2:])
+                        
+                        if video_id in self.active_streams:
+                            idx = self.active_streams[video_id]
+                            self.console.delete(idx, f"{idx} lineend + 1c")
+                        
+                        self.active_streams[video_id] = self.console.index("end-1c")
+                        self.console.insert("end", content + "\n", "debug")
+                else:
+                    tag = "info"
+                    if "✅" in msg or "SUCCESS" in msg: tag = "success"
+                    elif "❌" in msg or "ERROR" in msg: tag = "error"
+                    elif "🚀" in msg or "STEP" in msg: tag = "step"
+                    elif "⚠️" in msg or "WARNING" in msg: tag = "warning"
+                    
+                    for vid in list(self.active_streams.keys()):
+                        if vid in msg: del self.active_streams[vid]
+                    
+                    self.console.insert("end", msg + "\n", tag)
+
+            if has_new_log:
+                self.console.see("end")
+                if self.is_running: 
+                    self.update_idletasks() 
+                
+        except Exception: 
+            pass
+        finally:
+            if self.is_running and self.console.winfo_exists():
+                try:
+                    self.console.configure(state="disabled")
+                except: pass
 
     def _check_hardware(self):
         """Kiểm tra GPU/PyTorch để hiện lên sidebar."""
@@ -162,7 +242,6 @@ class ProGUI(ctk.CTk):
             self._set_hw_from_torch(torch)
         except RuntimeError as e:
             if "already registered" in str(e):
-                # PyTorch type da duoc dang ky boi process khac (vd plugin) - thu lay torch tu sys.modules
                 torch = __import__("sys").modules.get("torch")
                 if torch is not None:
                     try:
@@ -275,10 +354,9 @@ class ProGUI(ctk.CTk):
         ctk.CTkButton(toolbar, text="🗑 XÓA LOG", width=100, height=30, fg_color="#c0392b", hover_color="#e74c3c", command=self._on_clear_log).pack(side="right", padx=5)
 
         # 3. Textbox Log
-        # Tìm dòng khởi tạo self.console trong hàm _ui_dashboard
         self.console = ctk.CTkTextbox(
             self.tab_dashboard, 
-            font=("Consolas", 12, "bold"), # Đặt font đậm mặc định tại đây
+            font=("Consolas", 12, "bold"),
             state="disabled", 
             fg_color="#1e1e1e", 
             text_color="#dcdcdc"
@@ -505,63 +583,6 @@ class ProGUI(ctk.CTk):
             text=f"Video {completed}/{total} ({int(pct * 100)}%) — {cur_text}"
         )
 
-    # --- XỬ LÝ LOG ---
-
-    # app/ui/main_window.py
-
-    def _poll_log(self):
-        # 1. Xử lý Progress Bar tổng (Video 1/3...)
-        try:
-            while not self._progress_queue.empty():
-                item = self._progress_queue.get_nowait()
-                if item[0] == "progress":
-                    _, (completed, total, current) = item
-                    self._update_progress_ui(completed, total, current)
-        except: pass
-
-        # 2. Xử lý Console Log
-        self.console.configure(state="normal") # Mở khóa để insert
-        has_new_log = False
-        
-        try:
-            while not self.log_queue.empty():
-                msg = self.log_queue.get_nowait()
-                has_new_log = True
-                
-                # Kiểm tra dòng Stream (Dạng: [STREAM] | ID | Nội dung)
-                if msg.startswith("[STREAM]"):
-                    parts = [p.strip() for p in msg.split("|")]
-                    if len(parts) >= 3:
-                        video_id = parts[1]
-                        content = " | ".join(parts[2:]) # Lấy phần nội dung
-                        
-                        if video_id in self.active_streams:
-                            idx = self.active_streams[video_id]
-                            self.console.delete(idx, f"{idx} lineend + 1c")
-                        
-                        self.active_streams[video_id] = self.console.index("end-1c")
-                        self.console.insert("end", content + "\n", "debug")
-                else:
-                    # Log bình thường (DONE, ERROR...)
-                    tag = "info"
-                    if "✅" in msg or "SUCCESS" in msg: tag = "success"
-                    elif "❌" in msg or "ERROR" in msg: tag = "error"
-                    elif "🚀" in msg or "STEP" in msg: tag = "step"
-                    
-                    # Xóa ID khỏi stream nếu bước đó kết thúc
-                    for vid in list(self.active_streams.keys()):
-                        if vid in msg: del self.active_streams[vid]
-                    
-                    self.console.insert("end", msg + "\n", tag)
-
-            if has_new_log:
-                self.console.see("end")
-                self.update_idletasks() # Cập nhật UI ngay lập tức
-        except: pass
-        
-        self.console.configure(state="disabled") # KHÓA LẠI để không cho gõ phím
-        self.after(30, self._poll_log)
-
     def _on_clear_log(self):
         """Xóa sạch nội dung trong textbox log"""
         self.console.configure(state="normal")
@@ -664,9 +685,9 @@ class ProGUI(ctk.CTk):
         else: messagebox.showwarning("Lỗi", "Thư mục Output chưa tồn tại!")
 
     def _on_start(self):
-        if self.is_running: return
+        if self.is_running_pipeline: return
         self._on_save_config()
-        self.is_running = True
+        self.is_running_pipeline = True
         self.btn_run.configure(state="disabled", text="ĐANG CHẠY...", fg_color="#e67e22")
         self.lbl_status.configure(text="PROCESSING...", text_color="#e67e22")
         threading.Thread(target=self._thread_pipeline, daemon=True).start()
@@ -688,7 +709,7 @@ class ProGUI(ctk.CTk):
             engine._s3 = None
             
             engine.run(on_progress=on_progress)
-            self._progress_queue.put(("progress", (engine._progress_total, engine._progress_total, [])))
+            self._progress_queue.put(("progress", (engine._progress_total if hasattr(engine, '_progress_total') else 0, engine._progress_total if hasattr(engine, '_progress_total') else 0, [])))
             self.lbl_status.configure(text="COMPLETED", text_color="#2ecc71")
             messagebox.showinfo("Xong", "Đã xử lý xong!")
         except Exception as e:
@@ -701,9 +722,12 @@ class ProGUI(ctk.CTk):
                 msg = msg + "\n\n" + METH_FIX_MESSAGE
             messagebox.showerror("Lỗi", msg)
         finally:
-            self.is_running = False
+            self.is_running_pipeline = False
             self.btn_run.configure(state="normal", text="▶ BẮT ĐẦU XỬ LÝ", fg_color="#27ae60")
             self._update_progress_ui(0, 0, [])
+
+    # [FIX] Thêm biến cờ riêng cho luồng pipeline để tránh xung đột với is_running của UI
+    is_running_pipeline = False 
 
 if __name__ == "__main__":
     app = ProGUI()
