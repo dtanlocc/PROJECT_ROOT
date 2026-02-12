@@ -191,7 +191,7 @@ class Step4Translate(BaseStep):
                 idx += cnt
 
             out_file.write_text(_build_srt(entries), encoding="utf-8")
-            logger.success(f"Đã dịch xong: {out_file.name}")
+            logger.success(f"✅ Đã dịch xong: {out_file.name}")
             return out_file
         else:
             # --- Fallback: GoogleTranslator (khi không có gemini key) ---
@@ -222,5 +222,5 @@ class Step4Translate(BaseStep):
                 entry["text"] = results[idx : idx + n] if idx + n <= len(results) else entry["text"]
                 idx += n
             out_file.write_text(_build_srt(entries), encoding="utf-8")
-            logger.info(f"Đã dịch (GoogleTranslator): {out_file.name}")
+            logger.success(f"✅ Đã dịch (GoogleTranslator): {out_file.name}")
             return out_file

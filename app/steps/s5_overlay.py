@@ -173,7 +173,7 @@ class Step5Overlay(BaseStep):
         final_bw = min(w_video, int(best_w + w_video * 0.05))
         final_bh = int(best_h * 1.3)
         final_by = int(best_y - (best_h * 0.15))
-        logger.info(f"Đã lọc tiêu đề tĩnh. Chọn Sub tại Y={final_by} (nội dung thay đổi {num_texts} lần)")
+        # logger.info(f"Đã lọc tiêu đề tĩnh. Chọn Sub tại Y={final_by} (nội dung thay đổi {num_texts} lần)")
         return final_by, final_bh, final_bw
 
     def process(self, video_path: Path, srt_path: Path):
@@ -244,6 +244,8 @@ class Step5Overlay(BaseStep):
                 ret, frame = cap.read()
                 if not ret:
                     break
+
+                
                 sample_y = (h - bh) // 2
                 roi_sample = frame[sample_y : sample_y + bh, bx : bx + bw].copy()
                 frame[by : by + bh, bx : bx + bw] = cv2.GaussianBlur(roi_sample, (51, 51), 0)

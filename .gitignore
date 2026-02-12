@@ -17,3 +17,8 @@ done
 check.py
 
 old
+
+*.c
+*.pyd
+build
+build_temp

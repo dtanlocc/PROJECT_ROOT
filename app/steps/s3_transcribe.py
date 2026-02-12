@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional, Callable
 from loguru import logger
 from app.steps.base import BaseStep
+import time
 
 # Tắt check mạng Paddle
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
@@ -104,6 +105,8 @@ class Step3Transcribe(BaseStep):
 
         max_chars = 25 if lang in ["zh", "ja", "ko"] else 80
 
+        video_id = Path(audio_path).stem[:10]
+
         try:
             with open(str(audio_path), "rb") as f:
                 segments_iter, info = self._whisper.transcribe(
@@ -112,15 +115,20 @@ class Step3Transcribe(BaseStep):
                     vad_filter=True,
                     language=lang,
                     initial_prompt=initial_prompt, # QUAN TRỌNG: Ép tạo dấu câu
-                    beam_size=5
+                    beam_size=1,  # Thêm dòng này để tăng tốc tối đa
+                    best_of=1  # Thêm dòng này để tăng tốc tối đa
                 )
                 
                 duration = float(getattr(info, "duration", 0.0) or 0.0)
+                logger.info(f"{video_id} | STEP 3 | 🚀 Whisper: Bắt đầu (Audio: {duration:.1f}s)")
                 
-                for seg in segments_iter:
-                    if not seg.words:
-                        continue
-                    
+                for i, seg in enumerate(segments_iter):
+                    if i % 3 == 0: # Cập nhật thường xuyên hơn
+                        pct = int((seg.end / duration) * 100)
+                        bar = "█" * (pct // 5) + "░" * (20 - (pct // 5))
+                        # Định dạng chuẩn: [STREAM] | ID | NỘI DUNG
+                        logger.info(f"[STREAM] | {video_id} | STEP 3 | |{bar}| {pct}% ({seg.end:.1f}s)")
+                        
                     for w in seg.words:
                         current_words.append(w)
                         # Loại bỏ khoảng trắng để đếm ký tự chuẩn cho CJK
@@ -145,8 +153,11 @@ class Step3Transcribe(BaseStep):
                             self._add_subtitle(subtitles, current_words)
                             current_words = []
                     
+                    # 2. Cập nhật tiến độ liên tục ra GUI
                     if on_progress and duration > 0:
                         on_progress(min(seg.end / duration, 1.0))
+                
+                logger.success("✅ Hoàn thành Step 3: Transcribe.")
 
                 if current_words:
                     self._add_subtitle(subtitles, current_words)

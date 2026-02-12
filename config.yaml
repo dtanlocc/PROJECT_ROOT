@@ -1,22 +1,22 @@
 pipeline:
   workspace_root: .
-  input_videos: D:\tools\PROJECT_ROOT\input
+  input_videos: D:\TOOL\inputs\1
   step1_wav: workspace\01_wav
   step2_separated: workspace\02_separated
   step3_srt_raw: workspace\03_srt_raw
   step4_srt_translated: workspace\04_srt_translated
   step5_video_subbed: workspace\05_video_subbed
-  step6_final: D:\tools\PROJECT_ROOT\output
+  step6_final: D:\t\PROJECT_ROOT\output
   step6_voices_cache: workspace\06_voices
   done: done
   failed: failed
-ffmpeg_bin: C:\Users\TanLoc\AppData\Local\Microsoft\WinGet\Links\ffmpeg.exe
+ffmpeg_bin: C:/Users/Admin/Downloads/ffmpeg-8.0-full_build/ffmpeg-8.0-full_build/bin/ffmpeg.exe
 step1:
   sample_rate: 16000
   channels: 1
 step2:
   model: htdemucs
-  device: cpu
+  device: auto
   jobs: 1
   two_stems: true
   shifts: 2
