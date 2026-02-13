@@ -7,36 +7,53 @@ import json
 import ctypes
 import time
 import random
+import threading
 
 # ==============================================================================
-# LÕI BẢO MẬT & XÁC THỰC - CẤP ĐỘ QUÂN SỰ (ANTI-REVERSE ENGINEERING)
-# Tích hợp: Anti-Debug Deep, Anti-VM Deep, Timing Checks, Rolling Code Encryption
+# LÕI BẢO MẬT & XÁC THỰC (HARDCORE SECURITY CORE)
+# Tích hợp: Anti-Debug, Anti-VM, Memory Encryption, Timing Attacks, Dynamic Salt
 # ==============================================================================
 
 LICENSE_FILE = "system.lic"
-_ENCRYPTED_RAM_TOKEN = None  # Token bị băm nát trong RAM
+_ENCRYPTED_RAM_TOKEN = None  # Token sẽ được mã hóa liên tục trong RAM
 _ROLLING_KEY_SEED = int(time.time() * 1000) % 999999 # Seed thay đổi mỗi lần chạy
 
-# Hàm giả lập SECRET (sẽ bị tool build thay thế bằng mã hóa XOR)
-def SECRET(s):
-    return s
+# Hàm giả lập SECRET (Sau này tool build sẽ thay thế bằng mã hóa XOR/AES)
+def SECRET(s): return s
 
 # ------------------------------------------------------------------------------
-# NHÓM 1: CẢM BIẾN MÔI TRƯỜNG SÂU (DEEP ENV SENSORS)
+# 1. ANTI-DEBUGGING & ANTI-VM (CẢM BIẾN MÔI TRƯỜNG)
 # ------------------------------------------------------------------------------
-def is_deep_hacker_environment():
-    """Kiểm tra đa tầng: API, File, Timing, Hardware Specs"""
+def _is_debugger_present():
+    """Kiểm tra xem tiến trình có đang bị Debugger gắn vào không."""
     try:
-        # 1. API Cơ bản
+        # API Windows cơ bản
         if ctypes.windll.kernel32.IsDebuggerPresent(): return True
         
-        # 2. Check Remote Debugger
+        # Check Remote Debugger
         is_remote = ctypes.c_bool(False)
         ctypes.windll.kernel32.CheckRemoteDebuggerPresent(ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(is_remote))
         if is_remote.value: return True
+        
+        return False
+    except:
+        return False
 
-        # 3. Check Hardware Specs (Máy ảo thường yếu)
-        # Lấy số core CPU
+def _is_vm_environment():
+    """Phát hiện môi trường máy ảo dựa trên Driver và đặc điểm phần cứng."""
+    try:
+        # Danh sách driver/file đặc trưng của VM
+        vm_indicators = [
+            "C:\\windows\\system32\\drivers\\vmmouse.sys",
+            "C:\\windows\\system32\\drivers\\vmhgfs.sys",
+            "C:\\windows\\system32\\drivers\\vboxguest.sys",
+            "C:\\windows\\system32\\drivers\\vboxmouse.sys",
+            "C:\\windows\\system32\\drivers\\vboxvideo.sys"
+        ]
+        for f in vm_indicators:
+            if os.path.exists(f): return True
+            
+        # Kiểm tra số lượng CPU (Máy ảo thường ít core)
         class SYSTEM_INFO(ctypes.Structure):
             _fields_ = [("wProcessorArchitecture", ctypes.c_ushort), ("wReserved", ctypes.c_ushort),
                         ("dwPageSize", ctypes.c_ulong), ("lpMinimumApplicationAddress", ctypes.c_void_p),
@@ -46,64 +63,46 @@ def is_deep_hacker_environment():
                         ("wProcessorRevision", ctypes.c_ushort)]
         sysinfo = SYSTEM_INFO()
         ctypes.windll.kernel32.GetSystemInfo(ctypes.byref(sysinfo))
-        if sysinfo.dwNumberOfProcessors < 2: return True # Máy thật hiếm khi < 2 core
-
-        # Lấy RAM
-        class MEMORYSTATUSEX(ctypes.Structure):
-            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
-                        ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
-                        ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
-                        ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
-                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
-        mem = MEMORYSTATUSEX()
-        mem.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
-        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(mem))
-        if mem.ullTotalPhys / (1024**3) < 2.0: return True # Máy thật hiếm khi < 2GB RAM
-
-        # 4. Check Blacklisted Drivers & DLLs (Sandboxie, Wireshark, etc)
-        # (Cần lấy list modules đang load, ở đây demo check file driver)
-        vm_drivers = [
-            "C:\\windows\\system32\\drivers\\vmmouse.sys",
-            "C:\\windows\\system32\\drivers\\vmhgfs.sys",
-            "C:\\windows\\system32\\drivers\\vboxguest.sys",
-            "C:\\windows\\system32\\drivers\\vboxmouse.sys",
-            "C:\\windows\\system32\\drivers\\vboxvideo.sys"
-        ]
-        for d in vm_drivers:
-            if os.path.exists(d): return True
-
-        # 5. Timing Attack (RDTSC) - Đo chu kỳ CPU cực nhanh
-        # Nếu đang chạy trong VM hoặc bị Debug, khoảng cách giữa 2 lần đo sẽ rất lớn
-        t1 = time.perf_counter()
-        for _ in range(5000): pass # Loop rác
-        t2 = time.perf_counter()
-        if (t2 - t1) > 0.1: return True # Quá chậm -> Đang bị soi
+        if sysinfo.dwNumberOfProcessors < 2: return True 
 
         return False
     except:
-        return False # Silent fail để không crash
+        return False # Silent fail để tránh crash app trên một số máy lạ
+
+def is_deep_hacker_environment():
+    """Hàm tổng hợp kiểm tra môi trường độc hại."""
+    if _is_debugger_present(): return True
+    if _is_vm_environment(): return True
+    
+    # Timing Attack (RDTSC check đơn giản): Đo thời gian thực thi đoạn lệnh rác
+    # Nếu bị debug step-by-step, thời gian này sẽ rất lớn.
+    t1 = time.perf_counter()
+    for _ in range(5000): pass 
+    t2 = time.perf_counter()
+    if (t2 - t1) > 0.1: return True # Quá chậm -> Đang bị soi
+
+    return False
 
 # ------------------------------------------------------------------------------
-# NHÓM 2: BẢO VỆ RAM BIẾN ĐỔI (ROLLING CODE ENCRYPTION)
+# 2. MEMORY PROTECTION (BẢO VỆ BỘ NHỚ)
 # ------------------------------------------------------------------------------
-def _custom_hash(data, seed):
-    """Hàm băm tự chế để hacker không đoán được thuật toán chuẩn"""
-    res = 0
-    for c in data:
-        res = (res * seed + ord(c)) & 0xFFFFFFFF
-    return hex(res)[2:]
-
 def _grant_session():
-    """Tạo Token và mã hóa nó bằng Rolling Key"""
+    """
+    [HÀM NỘI BỘ] Cấp Token và mã hóa nó ngay lập tức trước khi cất vào RAM.
+    Chỉ được gọi khi xác thực Key thành công.
+    """
     global _ENCRYPTED_RAM_TOKEN, _ROLLING_KEY_SEED
     
-    salt = "ROLLING_SALT_" + str(_ROLLING_KEY_SEED)
+    # Salt động thay đổi theo thời gian
+    salt = f"RUNTIME_SALT_{_ROLLING_KEY_SEED}_SECURE"
+    # Token gốc (chưa mã hóa)
     raw_token = hashlib.sha256((get_hwid() + salt).encode()).hexdigest()
     
-    # Mã hóa: Đảo bit + XOR với Seed động
-    # Mỗi lần gọi hàm check, Seed sẽ thay đổi, Token trong RAM cũng đổi theo!
+    # Mã hóa XOR bằng khóa biến đổi (_ROLLING_KEY_SEED)
+    # Dữ liệu trong RAM sẽ là chuỗi byte vô nghĩa, không thể search ra string gốc.
     _ENCRYPTED_RAM_TOKEN = []
     for c in raw_token:
+        # Thuật toán mã hóa đơn giản nhưng hiệu quả với XOR và Bit shifting
         val = ord(c)
         val = ((val << 4) | (val >> 4)) & 0xFF # Swap nibbles
         val = val ^ (_ROLLING_KEY_SEED & 0xFF)
@@ -111,21 +110,24 @@ def _grant_session():
 
 def is_session_valid():
     """
-    Check Token và TỰ ĐỘNG XOAY KHÓA (Key Rotation) sau mỗi lần check.
-    Hacker dump RAM lúc này, 1 giây sau Key đã đổi, Dump vô dụng.
+    [CRITICAL] Kiểm tra Token hợp lệ. 
+    Hàm này được gọi liên tục bởi engine.py.
+    Tích hợp cơ chế tự hủy nếu phát hiện tấn công.
     """
     global _ENCRYPTED_RAM_TOKEN, _ROLLING_KEY_SEED
     
-    # Bẫy thời gian chặt chẽ
+    # Bắt đầu bấm giờ (Anti-Stepping)
     t_start = time.perf_counter()
     
+    # 1. Nếu môi trường có độc -> Từ chối ngay
     if is_deep_hacker_environment():
-        _ENCRYPTED_RAM_TOKEN = None
+        _ENCRYPTED_RAM_TOKEN = None 
         return False
         
+    # 2. Kiểm tra token trong RAM
     if not _ENCRYPTED_RAM_TOKEN: return False
 
-    # 1. Giải mã bằng Seed hiện tại
+    # 3. Giải mã và Kiểm tra
     try:
         decoded_chars = []
         for val in _ENCRYPTED_RAM_TOKEN:
@@ -135,82 +137,109 @@ def is_session_valid():
         
         decrypted_token = "".join(decoded_chars)
         
-        # 2. Verify
-        expected_salt = "ROLLING_SALT_" + str(_ROLLING_KEY_SEED)
+        # Verify lại với công thức gốc
+        expected_salt = f"RUNTIME_SALT_{_ROLLING_KEY_SEED}_SECURE"
         expected = hashlib.sha256((get_hwid() + expected_salt).encode()).hexdigest()
+        
         is_valid = (decrypted_token == expected)
         
-        # 3. [QUAN TRỌNG] KEY ROTATION: Đổi Seed mới và Mã hóa lại Token ngay lập tức
+        # [KEY ROTATION] Đổi khóa mã hóa liên tục sau mỗi lần check thành công
+        # Hacker dump RAM lúc t1 sẽ vô dụng ở t2.
         if is_valid:
-            _ROLLING_KEY_SEED = (_ROLLING_KEY_SEED * 1103515245 + 12345) & 0x7FFFFFFF # LCG Algorithm
-            _grant_session() # Sinh lại _ENCRYPTED_RAM_TOKEN mới với Seed mới
+            _ROLLING_KEY_SEED = (_ROLLING_KEY_SEED * 1664525 + 1013904223) & 0xFFFFFFFF # LCG PRNG
+            _grant_session() # Re-encrypt với seed mới
             
     except:
         return False
-        
+    
+    # Dừng bấm giờ. Nếu mất hơn 0.5s -> Đang bị Debug!
     t_end = time.perf_counter()
-    if (t_end - t_start) > 0.2: # Nếu giải mã + xoay key mất quá 0.2s -> Debugger detected
-        _ENCRYPTED_RAM_TOKEN = [0xFF] * 10 # Corrupt memory
+    if (t_end - t_start) > 0.5:
+        # Tự sát âm thầm: Ghi rác vào RAM
+        _ENCRYPTED_RAM_TOKEN = [0x00] * 10 
         return False
 
     return is_valid
 
 # ------------------------------------------------------------------------------
-# CÁC HÀM CƠ BẢN (HWID & LICENSE)
+# 3. HWID & LICENSE LOGIC
 # ------------------------------------------------------------------------------
 def get_hwid():
+    """Lấy HWID duy nhất, kết hợp Mainboard + HDD + GPU (nếu có)"""
     try:
-        # Thêm check GPU vào HWID để chặt chẽ hơn (Nếu có)
+        # UUID Mainboard
+        cmd_uuid = "wmic csproduct get uuid"
+        uuid = subprocess.check_output(cmd_uuid, shell=True, stderr=subprocess.DEVNULL).decode().split('\n')[1].strip()
+        
+        # Serial HDD
+        cmd_hdd = "wmic diskdrive get serialnumber"
+        hdd = subprocess.check_output(cmd_hdd, shell=True, stderr=subprocess.DEVNULL).decode().split('\n')[1].strip()
+        
+        # Thử lấy GPU ID (Optional)
         try:
             cmd_gpu = "wmic path win32_VideoController get pnpdeviceid"
             gpu = subprocess.check_output(cmd_gpu, shell=True, stderr=subprocess.DEVNULL).decode().split('\n')[1].strip()
         except: gpu = "NO_GPU"
 
-        cmd_uuid = "wmic csproduct get uuid"
-        uuid = subprocess.check_output(cmd_uuid, shell=True, stderr=subprocess.DEVNULL).decode().split('\n')[1].strip()
-        
-        cmd_hdd = "wmic diskdrive get serialnumber"
-        hdd = subprocess.check_output(cmd_hdd, shell=True, stderr=subprocess.DEVNULL).decode().split('\n')[1].strip()
-        
-        raw_hwid = f"{uuid}-{gpu}-{hdd}-HARDCORE_SALT"
-        return hashlib.sha256(raw_hwid.encode()).hexdigest()[:24].upper()
+        # Salt tĩnh để hacker không thể tự tính ra HWID dù biết thông số máy
+        raw = f"{uuid}::{gpu}::{hdd}::HARDCORE_SALT_V1"
+        return hashlib.sha256(raw.encode()).hexdigest()[:24].upper()
     except:
-        return "UNKNOWN-HWID-ERR"
+        return "UNKNOWN-HWID-ERR-001"
 
-def generate_local_license_hash(key, hwid):
-    # Dùng SHA512 + Salt phức tạp hơn
-    raw = f"||{key}||<<SUPER_SECURE>>||{hwid}||"
+def _generate_license_hash(key, hwid):
+    """Tạo chữ ký toàn vẹn cho file license"""
+    raw = f"||{key}||<<SECURE>>||{hwid}||"
     return hashlib.sha512(raw.encode()).hexdigest()
 
 def check_local_license():
+    """Kiểm tra license đã lưu trên máy"""
     if is_deep_hacker_environment(): return False, None
     if not os.path.exists(LICENSE_FILE): return False, None
+    
     try:
         with open(LICENSE_FILE, 'r') as f:
             data = json.load(f)
             saved_key = data.get("key")
             saved_hash = data.get("hash")
-        if saved_hash == generate_local_license_hash(saved_key, get_hwid()):
-            _grant_session()
+            
+        # Kiểm tra tính toàn vẹn: File license có bị sửa đổi không?
+        if saved_hash == _generate_license_hash(saved_key, get_hwid()):
+            _grant_session() # Cấp quyền chạy
             return True, saved_key
     except: pass
     return False, None
 
 def verify_key_with_server(user_key):
+    """
+    Xác thực Key (Online hoặc Offline giả lập).
+    URL API được bọc trong SECRET() để tool build tự động mã hóa.
+    """
     if is_deep_hacker_environment():
-        return False, "Môi trường không an toàn (VM/Debug)."
+        return False, "Hệ thống phát hiện môi trường không an toàn (VM/Debug)."
     
     hwid = get_hwid()
-    # Test Mode logic (Xóa khi build thật)
+    
+    # --- LOGIC TEST (Khi chưa có Server thật) ---
+    # Key test: Bắt đầu bằng VIP-
     if user_key.startswith("VIP-"):
+        # Giả lập server trả về OK
         with open(LICENSE_FILE, 'w') as f:
-            json.dump({"key": user_key, "hash": generate_local_license_hash(user_key, hwid)}, f)
+            json.dump({"key": user_key, "hash": _generate_license_hash(user_key, hwid)}, f)
         _grant_session()
-        return True, "Kích hoạt thành công!"
-    else:
-        return False, "Key sai."
+        return True, "Kích hoạt thành công (Local Test)!"
+    # --------------------------------------------
+
+    # --- LOGIC CALL API THẬT (Production) ---
+    # api_url = SECRET("https://api.cuaban.com/verify-license")
+    # payload = json.dumps({"license_key": user_key, "hwid": hwid}).encode('utf-8')
+    # ... (Code gọi API như cũ) ...
+    
+    return False, "Key không hợp lệ."
 
 def run_security_check(gui_callback):
+    """Entry point được gọi từ run_gui.py"""
     is_active, _ = check_local_license()
     if is_active: return True
+    # Nếu chưa active, gọi callback (hiện popup nhập key)
     return gui_callback()

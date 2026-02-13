@@ -22,7 +22,7 @@ step2:
   shifts: 2
   output_float32: false
 step3:
-  srt_source: image
+  srt_source: voice
   model_size: large-v2
   device: cpu
   language: zh

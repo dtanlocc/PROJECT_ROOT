@@ -1,197 +1,248 @@
 import os
 import shutil
-import glob
 import subprocess
 import random
-import string
-import re
+import ast
 import base64
+import time
+import hashlib
+import string
 from setuptools import setup
 from Cython.Build import cythonize
 
 # ==============================================================================
-# QUY TRÌNH CHỐNG HACK TỐI THƯỢNG - PIPELINE ĐÓNG GÓI TỰ ĐỘNG (V3.0)
-# Nâng cấp: Mê Cung Gương + Mã hóa XOR Động + Đa Hình (Mã rác) + Hũ Mật (Honeypot)
+# BUILD PIPELINE V7.0 - GOD-EYE SINGULARITY (MILITARY GRADE)
+# Quy trình bảo mật tối tân: Import Hiding + Bit-Shuffling + Anti-Forensics
 # ==============================================================================
 
 SOURCE_DIR = "app"
-RELEASE_DIR = "app_release"
+RELEASE_DIR = "GodEye_Release"
+BUILD_TEMP = "singularity_temp"
 
-# Khóa mã hóa thay đổi ngẫu nhiên mỗi lần bấm Build
-BUILD_XOR_KEY = random.randint(1, 255)
-
-# Danh sách file lõi thật
+# File được tiêm bảo vệ mức cao nhất
 SENSITIVE_FILES = [
-    "core/engine.py",
-    "core/security.py",       # File bảo mật vừa tạo
-    "steps/s1_normalize.py",
-    "steps/s2_demucs.py",
-    "steps/s3_transcribe.py",
-    "steps/s4_translate.py",
-    "steps/s5_overlay.py",
-    "steps/s6_mix.py",
-    "services/ffmpeg_manager.py",
-    "core/config_loader.py"
+    "app/core/security.py",      # Bảo mật bản quyền
+    "app/core/engine.py",        # Luồng xử lý chính
+    "app/core/config_loader.py", # Cấu hình hệ thống
+    "app/services/ffmpeg_manager.py", # Thuật toán xử lý video
+    "app/steps/s1_normalize.py"
+    "app/steps/s2_demucs.py",    # Thuật toán tách âm
+    "app/steps/s3_transcribe.py", # Thuật toán nhận diện tiếng nói
+    "app/steps/s4_translate.py",  # Thuật toán dịch thuật
+    "app/steps/s5_overlay.py",    # Thuật toán chèn sub
+    "app/steps/s6_mix.py",        # Thuật toán mix final
+    "app/ui/main_window.py",   # Giao diện người dùng chính
+    "launcher.py",              # Entry point của CLI
+    "run_gui.py"                 # Entry point của GUI
 ]
-]
 
-def generate_random_name(length=10):
-    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
-
-def generate_junk_code():
-    """Tạo ra các hàm Python rác, hợp lệ nhưng không làm gì cả để đổi mã Hash của file"""
-    junk_funcs = ""
-    for _ in range(random.randint(2, 5)):
-        func_name = f"_O{generate_random_name(6)}"
-        junk_funcs += f"\ndef {func_name}():\n    x = {random.randint(100, 999)}\n    y = '{generate_random_name()}'\n    return str(x) + y\n"
-    return junk_funcs
-
-def step_1_copy_source():
-    print("🚀 BƯỚC 1: Tạo bản sao Source Code...")
-    if os.path.exists(RELEASE_DIR):
-        shutil.rmtree(RELEASE_DIR)
-    shutil.copytree(SOURCE_DIR, RELEASE_DIR)
-
-def step_1b_create_honeypots():
-    """Tạo ra các file giả mạo chứa tên gọi kích thích để đánh lừa Hacker"""
-    print("🚀 BƯỚC 1B: Rải 'Hũ mật' (Honeypots) đánh lạc hướng...")
-    honeypot_names = ["license_generator.py", "premium_unlock.py", "bypass_auth.py"]
-    core_dir = os.path.join(RELEASE_DIR, "core")
-    os.makedirs(core_dir, exist_ok=True)
-    
-    for hp in honeypot_names:
-        hp_path = os.path.join(core_dir, hp)
-        with open(hp_path, "w", encoding="utf-8") as f:
-            f.write("def unlock_premium():\n    return False\n\ndef get_admin_key():\n    pass\n")
-            f.write(generate_junk_code())
-        # Thêm file giả này vào danh sách cần mã hóa Cython luôn!
-        SENSITIVE_FILES.append(f"core/{hp}")
-        print(f"   [-] Đã rải hũ mật: {hp}")
-
-def step_2_encrypt_strings_and_inject_junk():
-    """Mã hóa XOR động và chèn mã rác Đa hình (Polymorphism)"""
-    print("🚀 BƯỚC 2: Mã hóa XOR Động & Chèn mã rác Đa hình...")
-    pattern = re.compile(r'SECRET\s*\(\s*(["\'])(.*?)\1\s*\)')
-    count = 0
-    
-    for root, _, files in os.walk(RELEASE_DIR):
-        for f in files:
-            if f.endswith(".py"):
-                file_path = os.path.join(root, f)
-                with open(file_path, 'r', encoding='utf-8') as file:
-                    content = file.read()
-
-                # 1. Mã hóa chuỗi bằng XOR
-                def replacer(match):
-                    nonlocal count
-                    count += 1
-                    raw_str = match.group(2)
-                    
-                    # XOR từng ký tự với BUILD_XOR_KEY sau đó Encode Base64
-                    xor_bytes = bytes([ord(c) ^ BUILD_XOR_KEY for c in raw_str])
-                    b64_encoded = base64.b64encode(xor_bytes).decode('utf-8')
-                    
-                    # Code giải mã (sẽ chạy lúc App thực thi)
-                    return f"(''.join(chr(b ^ {BUILD_XOR_KEY}) for b in __import__('base64').b64decode(b'{b64_encoded}')))"
-
-                content = pattern.sub(replacer, content)
-                
-                # 2. Chèn mã rác (Junk code) vào đầu file để thay đổi cấu trúc
-                if file_path.replace("\\", "/").endswith(tuple(SENSITIVE_FILES)):
-                    content = generate_junk_code() + "\n" + content
-
-                with open(file_path, 'w', encoding='utf-8') as file:
-                    file.write(content)
-                        
-    print(f"   [-] Đã mã hóa {count} chuỗi bằng XOR Key [{BUILD_XOR_KEY}]")
-    print(f"   [-] Đã chèn mã rác (Polymorphism) vào các file nhạy cảm.")
-
-def step_3_dynamic_rename():
-    print("🚀 BƯỚC 3: Khởi tạo 'Mê cung gương' (Dynamic Rename)...")
-    mapping = {}
-    new_target_files = []
-
-    for rel_path in SENSITIVE_FILES:
-        old_path = os.path.join(RELEASE_DIR, rel_path)
-        if os.path.exists(old_path):
-            old_dir = os.path.dirname(old_path)
-            old_filename = os.path.basename(old_path)
-            old_module = old_filename.replace(".py", "")
-
-            new_module = f"sys_{generate_random_name(12)}"
-            new_filename = new_module + ".py"
-            new_path = os.path.join(old_dir, new_filename)
-
-            os.rename(old_path, new_path)
-            mapping[old_module] = new_module
-            new_target_files.append(new_path)
-            print(f"   [-] Đã ngụy trang: {old_filename} ---> {new_filename}")
-
-    # Fix Imports
-    for root, _, files in os.walk(RELEASE_DIR):
-        for f in files:
-            if f.endswith(".py"):
-                file_path = os.path.join(root, f)
-                with open(file_path, 'r', encoding='utf-8') as file:
-                    content = file.read()
-                
-                for old_mod, new_mod in mapping.items():
-                    content = re.sub(rf'(\bfrom\s+([\w\.]+\.)?){old_mod}\b', rf'\g<1>{new_mod}', content)
-                    content = re.sub(rf'(\bimport\s+([\w\.]+\.)?){old_mod}\b', rf'\g<1>{new_mod}', content)
-                
-                with open(file_path, 'w', encoding='utf-8') as file:
-                    file.write(content)
-
-    return new_target_files
-
-def step_4_cythonize(target_files):
-    print("🚀 BƯỚC 4: Biên dịch Cython ép thành Binary (.pyd)...")
-    if not target_files:
-        return
-
-    setup(
-        ext_modules=cythonize(
-            target_files,
-            compiler_directives={'language_level': "3"},
-            quiet=True
-        ),
-        script_args=["build_ext", "--inplace"]
-    )
-
-def step_5_cleanup(target_files):
-    print("🚀 BƯỚC 5: Dọn dẹp & Xóa dấu vết source code...")
-    if os.path.exists("build"): shutil.rmtree("build")
+# ------------------------------------------------------------------------------
+# 1. THUẬT TOÁN "SINGULARITY CIPHER" (S-BOX + DYNAMIC BIT SHUFFLE)
+# ------------------------------------------------------------------------------
+def singularity_encrypt(data: str, key: int) -> str:
+    """Mã hóa kết hợp hoán vị bit và thay thế giá trị dựa trên ma trận động."""
+    res = []
+    state = key
+    for char in data.encode('utf-8'):
+        # LCG PRNG cập nhật trạng thái liên tục
+        state = (state * 1664525 + 1013904223) & 0xFFFFFFFF
+        s_box = (state >> 24) & 0xFF
         
-    for py_file in target_files:
-        if os.path.exists(py_file): os.remove(py_file)
-            
-    for c_file in glob.glob(f"{RELEASE_DIR}/**/*.c", recursive=True):
-        os.remove(c_file)
+        # Bước 1: XOR với trạng thái động
+        val = char ^ s_box
+        
+        # Bước 2: Bit Shuffling (Hoán vị bit ngẫu nhiên dựa trên key)
+        # Chuyển đổi vị trí bit để Decompiler không thể nhận diện phép toán
+        shift_a = (key % 5) + 1
+        shift_b = (key % 3) + 1
+        val = ((val << shift_a) | (val >> (8 - shift_a))) & 0xFF
+        val = val ^ ((val >> shift_b) | (val << (8 - shift_b))) & 0xFF
+        
+        res.append(val)
+    return base64.b64encode(bytes(res)).decode('utf-8')
 
-def step_6_build_launcher():
-    print("🚀 BƯỚC 6: Tự động Build Smart Launcher (Nuitka)...")
-    if not os.path.exists("launcher.py"): return
+# Lõi giải mã Singularity - Được nhúng vào mọi file
+DECRYPTOR_CORE = """
+import base64 as _b64
+def _s_dec(s, k):
+    try:
+        d = _b64.b64decode(s)
+        r = []; st = k
+        for v in d:
+            st = (st * 1664525 + 1013904223) & 0xFFFFFFFF
+            sb = (st >> 24) & 0xFF
+            sa = (k % 5) + 1; sb_sh = (k % 3) + 1
+            # Đảo ngược quy trình Bit Shuffling
+            v = v ^ ((v >> sb_sh) | (v << (8 - sb_sh))) & 0xFF
+            v = ((v >> sa) | (v << (8 - sa))) & 0xFF
+            r.append(v ^ sb)
+        return bytes(r).decode('utf-8')
+    except: return ""
 
-    nuitka_cmd = (
-        f"python -m nuitka --standalone --disable-console "
-        f"--windows-icon-from-ico=app/assets/icon.ico "
-        f"--output-dir=dist launcher.py"
-    )
-    subprocess.run(nuitka_cmd, shell=True)
+def _v_imp(m, k):
+    # Hàm ẩn danh Import để che giấu thư viện hệ thống
+    return __import__(_s_dec(m, k))
+"""
+
+# ------------------------------------------------------------------------------
+# 2. ADVANCED SENTINEL (CHỐNG PHÁP Y KỸ THUẬT SỐ)
+# ------------------------------------------------------------------------------
+def generate_advanced_sentinel(key: int):
+    """Sentinel thông minh: Phát hiện máy ảo, debugger và sandbox qua dấu vết hệ thống."""
+    # Mã hóa các chuỗi nhạy cảm để hacker không search được string trong binary
+    reg_path = singularity_encrypt("HARDWARE\\Description\\System\\CentralProcessor\\0", key)
+    vm_files = [
+        singularity_encrypt("C:\\windows\\system32\\drivers\\vmmouse.sys", key),
+        singularity_encrypt("C:\\windows\\system32\\drivers\\vboxguest.sys", key)
+    ]
+    
+    sentinel_code = f"""
+def _guard():
+    _ct = _v_imp('{singularity_encrypt("ctypes", key)}', {key})
+    _os = _v_imp('{singularity_encrypt("os", key)}', {key})
+    # 1. Check Debugger (WinAPI)
+    if _ct.windll.kernel32.IsDebuggerPresent(): _os._exit(0)
+    # 2. Check Sandbox/VM qua Registry
+    try:
+        _winreg = _v_imp('{singularity_encrypt("winreg", key)}', {key})
+        k = _winreg.OpenKey(_winreg.HKEY_LOCAL_MACHINE, _s_dec('{reg_path}', {key}))
+        v, _ = _winreg.QueryValueEx(k, "ProcessorNameString")
+        if "QEMU" in v or "VirtIO" in v: _os._exit(0)
+    except: pass
+    # 3. Check VM Drivers
+    for f in [{', '.join([f"'{x}'" for x in vm_files])}]:
+        if _os.path.exists(_s_dec(f, {key})): _os._exit(0)
+_guard()
+"""
+    return sentinel_code
+
+# ------------------------------------------------------------------------------
+# 3. AST SINGULARITY TRANSFORMER
+# ------------------------------------------------------------------------------
+class SingularityObfuscator(ast.NodeTransformer):
+    def __init__(self, seed):
+        self.seed = seed
+        self.key_mapping = {}
+
+    def visit_Import(self, node):
+        """Xóa bỏ các lệnh import tường minh."""
+        return ast.Pass()
+
+    def visit_ImportFrom(self, node):
+        """Xóa bỏ các lệnh import from tường minh."""
+        return ast.Pass()
+
+    def visit_Constant(self, node):
+        """Mã hóa mọi chuỗi hằng số."""
+        if isinstance(node.value, str) and len(node.value) > 2:
+            if node.value.startswith("__"): return node
+            encrypted = singularity_encrypt(node.value, self.seed)
+            return ast.Call(
+                func=ast.Name(id='_s_dec', ctx=ast.Load()),
+                args=[ast.Constant(value=encrypted), ast.Constant(value=self.seed)],
+                keywords=[]
+            )
+        return node
+
+# ------------------------------------------------------------------------------
+# 4. MAIN BUILD PIPELINE
+# ------------------------------------------------------------------------------
+def step_info(msg):
+    print(f"\n\033[92m[GOD-EYE-V7]\033[0m ➤ {msg}")
+
+def main():
+    t_start = time.time()
+    
+    # Chuẩn bị môi trường
+    if os.path.exists(RELEASE_DIR): shutil.rmtree(RELEASE_DIR)
+    if os.path.exists(BUILD_TEMP): shutil.rmtree(BUILD_TEMP)
+    os.makedirs(os.path.join(RELEASE_DIR, "app"), exist_ok=True)
+    
+    shutil.copytree(SOURCE_DIR, os.path.join(BUILD_TEMP, "app"))
+    for f in ["run_gui.py", "launcher.py"]:
+        if os.path.exists(f): shutil.copy(f, os.path.join(BUILD_TEMP, f))
+
+    # Obfuscation Stage
+    step_info("Đang thực thi biến đổi Singularity (AST Obfuscation)...")
+    all_files = []
+    for root, _, files in os.walk(BUILD_TEMP):
+        for f in files:
+            if f.endswith(".py"): all_files.append(os.path.join(root, f))
+
+    for path in all_files:
+        rel = os.path.relpath(path, BUILD_TEMP).replace("\\", "/")
+        is_sensitive = any(s in rel for s in SENSITIVE_FILES)
+        
+        with open(path, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        try:
+            tree = ast.parse(source)
+            f_seed = random.randint(500000, 2000000)
+            transformer = SingularityObfuscator(f_seed)
+            new_tree = transformer.visit(tree)
+            ast.fix_missing_locations(new_tree)
+            processed_code = ast.unparse(new_tree)
+        except Exception as e:
+            processed_code = source
+
+        # Lắp ráp lớp bảo vệ God-Eye
+        final_code = DECRYPTOR_CORE + "\n"
+        if is_sensitive:
+            final_code += generate_advanced_sentinel(f_seed) + "\n"
+        final_code += processed_code
+        
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(final_code)
+
+    # Biên dịch Binary
+    step_info("Biên dịch mã máy C-Level (.pyd)...")
+    target_pys = []
+    for root, _, files in os.walk(os.path.join(BUILD_TEMP, "app")):
+        for f in files:
+            if f.endswith(".py") and f != "__init__.py":
+                target_pys.append(os.path.join(root, f))
+    target_pys.append(os.path.join(BUILD_TEMP, "run_gui.py"))
+
+    try:
+        setup(
+            ext_modules=cythonize(
+                target_pys, 
+                compiler_directives={'language_level': "3", 'always_allow_keywords': True, 'profile': False},
+                quiet=True
+            ),
+            script_args=["build_ext", "--build-lib", RELEASE_DIR]
+        )
+    except Exception as e:
+        print(f"❌ Lỗi biên dịch: {e}")
+
+    # Đóng gói OneFile
+    step_info("Nén 'God-Eye' vào file thực thi duy nhất (Nuitka)...")
+    icon = os.path.join(SOURCE_DIR, "assets", "icon.ico")
+    nuitka_cmd = [
+        "python", "-m", "nuitka", "--standalone", "--disable-console",
+        "--onefile", "--remove-output", "--lto=yes", "--jobs=4",
+        f"--output-dir={RELEASE_DIR}",
+        "--output-filename=AI_Reup_Pro_V7.exe",
+        f"--windows-icon-from-ico={icon}" if os.path.exists(icon) else "",
+        os.path.join(BUILD_TEMP, "launcher.py")
+    ]
+    subprocess.run([c for c in nuitka_cmd if c], check=True)
+
+    # Finalize
+    step_info("Hoàn tất cấu trúc bản thương mại...")
+    final_app_path = os.path.join(RELEASE_DIR, "app")
+    shutil.copytree(os.path.join(SOURCE_DIR, "assets"), os.path.join(final_app_path, "assets"), dirs_exist_ok=True)
+    if os.path.exists("config.dist.yaml"):
+        shutil.copy("config.dist.yaml", os.path.join(RELEASE_DIR, "config.yaml"))
+
+    # Cleanup
+    for trash in [BUILD_TEMP, "build"]:
+        if os.path.exists(trash): shutil.rmtree(trash)
+
+    duration = time.time() - t_start
+    step_info(f"🚀 BUILD V7 THÀNH CÔNG! Tổng thời gian: {duration:.2f}s")
+    print(f"📍 Sản phẩm: {os.path.abspath(RELEASE_DIR)}")
 
 if __name__ == "__main__":
-    print("\n" + "="*60)
-    print("🔥 BẮT ĐẦU PIPELINE ĐÓNG GÓI CHỐNG HACK TỐI THƯỢNG (V3.0) 🔥")
-    print("="*60)
-    
-    step_1_copy_source()
-    step_1b_create_honeypots()
-    step_2_encrypt_strings_and_inject_junk()
-    new_files = step_3_dynamic_rename()
-    step_4_cythonize(new_files)
-    step_5_cleanup(new_files)
-    step_6_build_launcher()
-    
-    print("\n" + "="*60)
-    print("✅ HOÀN TẤT TẠO BẢN PHÂN PHỐI SIÊU BẢO MẬT!")
-    print("="*60)
+    main()

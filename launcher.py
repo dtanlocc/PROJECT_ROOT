@@ -4,50 +4,51 @@ import subprocess
 
 # ==============================================================================
 # SMART LAUNCHER - TRÌNH KHỞI CHẠY THÔNG MINH
-# Nhiệm vụ: Tìm môi trường venv và gọi App chính (ẩn Console)
 # ==============================================================================
 
 def main():
-    # 1. Tìm thư mục gốc (nơi chứa file Launcher.exe)
+    # 1. Xác định thư mục gốc của ứng dụng
     if getattr(sys, 'frozen', False):
+        # Nếu đang chạy file .exe đã đóng gói (Nuitka)
         base_dir = os.path.dirname(sys.executable)
     else:
+        # Nếu đang chạy file script .py
         base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # 2. Đường dẫn tới Python bên trong venv
-    # (Thư mục venv sẽ được Inno Setup tải về sau)
-    python_exe = os.path.join(base_dir, "venv", "Scripts", "python.exe")
+    # 2. Xác định đường dẫn Python trong venv
+    # Giả định thư mục venv nằm ngay cạnh launcher
+    venv_python = os.path.join(base_dir, "venv", "Scripts", "python.exe")
     
-    # Đường dẫn tới file chạy chính (đã build hoặc script)
-    # Ưu tiên chạy bản đã build (run_gui.exe hoặc pyd) nếu có, không thì chạy .py
+    # 3. Xác định file chạy chính
     if os.path.exists(os.path.join(base_dir, "run_gui.exe")):
-         main_script = os.path.join(base_dir, "run_gui.exe")
-         # Nếu là exe thì gọi trực tiếp
-         cmd = [main_script]
+        # Ưu tiên chạy file EXE đã build nếu có (Giai đoạn 2)
+        target_cmd = [os.path.join(base_dir, "run_gui.exe")]
     else:
-         main_script = os.path.join(base_dir, "run_gui.py")
-         cmd = [python_exe, main_script]
+        # Chạy file script Python (Giai đoạn 1 - Dev)
+        script_path = os.path.join(base_dir, "run_gui.py")
+        target_cmd = [venv_python, script_path]
 
-    # 3. Kiểm tra môi trường
-    # Nếu đang chạy dạng script (.py) mà không thấy python của venv -> Báo lỗi
-    if not os.path.exists(python_exe) and main_script.endswith(".py"):
-        import ctypes
-        ctypes.windll.user32.MessageBoxW(0, "Không tìm thấy môi trường (venv).\nVui lòng chạy Setup hoặc kiểm tra thư mục cài đặt!", "Lỗi Khởi Động", 16)
-        sys.exit(1)
+    # 4. Kiểm tra môi trường (Chống lỗi sơ đẳng)
+    if not os.path.exists(target_cmd[0]) and target_cmd[0].endswith(".exe"):
+         # Trường hợp gọi python.exe nhưng không thấy file
+         import ctypes
+         ctypes.windll.user32.MessageBoxW(0, "Không tìm thấy môi trường Python (venv)!\nVui lòng chạy file Setup để cài đặt.", "Lỗi Hệ Thống", 16)
+         sys.exit(1)
 
-    # 4. CHẠY APP (Ẩn cửa sổ CMD)
+    # 5. Cấu hình chạy ẩn Console (Chỉ trên Windows)
     startupinfo = None
-    if os.name == 'nt': # Chỉ áp dụng cho Windows
+    if os.name == 'nt':
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = 0 # SW_HIDE (Ẩn cửa sổ đen)
 
+    # 6. THỰC THI
     try:
-        # Gọi subprocess để chạy App độc lập
-        subprocess.run(cmd, startupinfo=startupinfo)
+        # cwd=base_dir: Quan trọng! Đảm bảo lệnh import app... hoạt động đúng
+        subprocess.run(target_cmd, cwd=base_dir, startupinfo=startupinfo)
     except Exception as e:
-        print(f"Error launching app: {e}")
-        input()
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(0, f"Lỗi khởi động:\n{str(e)}", "Fatal Error", 16)
 
 if __name__ == "__main__":
     main()
