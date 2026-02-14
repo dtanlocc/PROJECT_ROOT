@@ -22,3 +22,8 @@ old
 *.pyd
 build
 build_temp
+
+overlord_apex_release
+overlord_apex_temp
+over_source_inspect
+env

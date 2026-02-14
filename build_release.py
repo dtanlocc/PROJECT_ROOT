@@ -5,244 +5,301 @@ import random
 import ast
 import base64
 import time
-import hashlib
 import string
+import sys
+import marshal
 from setuptools import setup
 from Cython.Build import cythonize
 
 # ==============================================================================
-# BUILD PIPELINE V7.0 - GOD-EYE SINGULARITY (MILITARY GRADE)
-# Quy trình bảo mật tối tân: Import Hiding + Bit-Shuffling + Anti-Forensics
+# BUILD PIPELINE V48.0 - OVERLORD APEX (CLOUD-GHOST)
+# Trạng thái: Ổn định (Dựa trên V46.1).
+# Chức năng: Xuất file core_blob.enc để giấu lên Supabase. 
+# Logic: EXE rỗng -> Tải linh hồn từ URL -> Nạp RAM -> Chạy App.
 # ==============================================================================
 
 SOURCE_DIR = "app"
-RELEASE_DIR = "GodEye_Release"
-BUILD_TEMP = "singularity_temp"
+ENTRY_GUI = "run_gui.py"
+RELEASE_DIR = "Overlord_Apex_Release"
+INSPECT_DIR = "Overlord_Source_Inspect"
+BUILD_TEMP = "overlord_apex_temp"
+VOID_ENTRY = "void_main_entry"
+CORE_LIB_NAME = "_core_sys_x64" 
 
-# File được tiêm bảo vệ mức cao nhất
-SENSITIVE_FILES = [
-    "app/core/security.py",      # Bảo mật bản quyền
-    "app/core/engine.py",        # Luồng xử lý chính
-    "app/core/config_loader.py", # Cấu hình hệ thống
-    "app/services/ffmpeg_manager.py", # Thuật toán xử lý video
-    "app/steps/s1_normalize.py"
-    "app/steps/s2_demucs.py",    # Thuật toán tách âm
-    "app/steps/s3_transcribe.py", # Thuật toán nhận diện tiếng nói
-    "app/steps/s4_translate.py",  # Thuật toán dịch thuật
-    "app/steps/s5_overlay.py",    # Thuật toán chèn sub
-    "app/steps/s6_mix.py",        # Thuật toán mix final
-    "app/ui/main_window.py",   # Giao diện người dùng chính
-    "launcher.py",              # Entry point của CLI
-    "run_gui.py"                 # Entry point của GUI
-]
+# URL TRỰC TIẾP ĐẾN FILE core_blob.enc TRÊN SUPABASE STORAGE CỦA BẠN
+# Sau khi upload file core_blob.enc lên Supabase, hãy dán link Public URL vào đây.
+CORE_API_URL = "https://supabase.com/dashboard/project/gfihmymecoykcogqykbl/storage/files/buckets/security/core_blob.enc"
 
 # ------------------------------------------------------------------------------
-# 1. THUẬT TOÁN "SINGULARITY CIPHER" (S-BOX + DYNAMIC BIT SHUFFLE)
+# 1. ENCRYPTION ENGINE & CORE BYTECODE GENERATOR
 # ------------------------------------------------------------------------------
-def singularity_encrypt(data: str, key: int) -> str:
-    """Mã hóa kết hợp hoán vị bit và thay thế giá trị dựa trên ma trận động."""
+def chaos_encrypt(data: str, key: int) -> str:
     res = []
     state = key
-    for char in data.encode('utf-8'):
-        # LCG PRNG cập nhật trạng thái liên tục
+    b_data = data.encode('utf-8')
+    for i, char in enumerate(b_data):
         state = (state * 1664525 + 1013904223) & 0xFFFFFFFF
-        s_box = (state >> 24) & 0xFF
-        
-        # Bước 1: XOR với trạng thái động
-        val = char ^ s_box
-        
-        # Bước 2: Bit Shuffling (Hoán vị bit ngẫu nhiên dựa trên key)
-        # Chuyển đổi vị trí bit để Decompiler không thể nhận diện phép toán
-        shift_a = (key % 5) + 1
-        shift_b = (key % 3) + 1
-        val = ((val << shift_a) | (val >> (8 - shift_a))) & 0xFF
-        val = val ^ ((val >> shift_b) | (val << (8 - shift_b))) & 0xFF
-        
+        xor_key = (state >> 24) & 0xFF
+        shift = (key + i) % 7 + 1
+        val = char ^ xor_key
+        val = ((val << shift) | (val >> (8 - shift))) & 0xFF
+        val ^= (i & 0xFF)
         res.append(val)
     return base64.b64encode(bytes(res)).decode('utf-8')
 
-# Lõi giải mã Singularity - Được nhúng vào mọi file
-DECRYPTOR_CORE = """
-import base64 as _b64
-def _s_dec(s, k):
+def get_encrypted_core_bytecode(seed):
+    junk_val1 = random.randint(0xFFFFF, 0xFFFFFF)
+    junk_val2 = random.randint(0xFFFFF, 0xFFFFFF)
+    target_xor = seed ^ junk_val1
+    final_op_val = target_xor + junk_val2
+
+    core_src = f"""
+import base64 as _b
+import marshal as _m
+import types as _t
+import sys, os, ctypes
+
+_CACHE = {{}}
+
+def _get_k():
+    base = {final_op_val}
+    return (base - {junk_val2}) ^ {junk_val1}
+
+def _s(s):
+    if not s: return ""
+    if s in _CACHE: return _CACHE[s]
     try:
-        d = _b64.b64decode(s)
-        r = []; st = k
-        for v in d:
+        k = _get_k()
+        d = _b.b64decode(s); r = bytearray(); st = k
+        for i, v in enumerate(d):
             st = (st * 1664525 + 1013904223) & 0xFFFFFFFF
-            sb = (st >> 24) & 0xFF
-            sa = (k % 5) + 1; sb_sh = (k % 3) + 1
-            # Đảo ngược quy trình Bit Shuffling
-            v = v ^ ((v >> sb_sh) | (v << (8 - sb_sh))) & 0xFF
-            v = ((v >> sa) | (v << (8 - sa))) & 0xFF
-            r.append(v ^ sb)
-        return bytes(r).decode('utf-8')
+            v ^= (i & 0xFF)
+            sh = (k + i) % 7 + 1
+            v = ((v >> sh) | (v << (8 - sh))) & 0xFF
+            r.append(v ^ ((st >> 24) & 0xFF))
+        res = r.decode('utf-8')
+        _CACHE[s] = res
+        return res
     except: return ""
-
-def _v_imp(m, k):
-    # Hàm ẩn danh Import để che giấu thư viện hệ thống
-    return __import__(_s_dec(m, k))
 """
+    bytecode = compile(core_src, '<ram_turbo_core>', 'exec')
+    return base64.b64encode(marshal.dumps(bytecode)).decode('utf-8')
 
 # ------------------------------------------------------------------------------
-# 2. ADVANCED SENTINEL (CHỐNG PHÁP Y KỸ THUẬT SỐ)
+# 2. APEX TRANSFORMER (Giữ nguyên logic V46.1)
 # ------------------------------------------------------------------------------
-def generate_advanced_sentinel(key: int):
-    """Sentinel thông minh: Phát hiện máy ảo, debugger và sandbox qua dấu vết hệ thống."""
-    # Mã hóa các chuỗi nhạy cảm để hacker không search được string trong binary
-    reg_path = singularity_encrypt("HARDWARE\\Description\\System\\CentralProcessor\\0", key)
-    vm_files = [
-        singularity_encrypt("C:\\windows\\system32\\drivers\\vmmouse.sys", key),
-        singularity_encrypt("C:\\windows\\system32\\drivers\\vboxguest.sys", key)
-    ]
-    
-    sentinel_code = f"""
-def _guard():
-    _ct = _v_imp('{singularity_encrypt("ctypes", key)}', {key})
-    _os = _v_imp('{singularity_encrypt("os", key)}', {key})
-    # 1. Check Debugger (WinAPI)
-    if _ct.windll.kernel32.IsDebuggerPresent(): _os._exit(0)
-    # 2. Check Sandbox/VM qua Registry
-    try:
-        _winreg = _v_imp('{singularity_encrypt("winreg", key)}', {key})
-        k = _winreg.OpenKey(_winreg.HKEY_LOCAL_MACHINE, _s_dec('{reg_path}', {key}))
-        v, _ = _winreg.QueryValueEx(k, "ProcessorNameString")
-        if "QEMU" in v or "VirtIO" in v: _os._exit(0)
-    except: pass
-    # 3. Check VM Drivers
-    for f in [{', '.join([f"'{x}'" for x in vm_files])}]:
-        if _os.path.exists(_s_dec(f, {key})): _os._exit(0)
-_guard()
-"""
-    return sentinel_code
-
-# ------------------------------------------------------------------------------
-# 3. AST SINGULARITY TRANSFORMER
-# ------------------------------------------------------------------------------
-class SingularityObfuscator(ast.NodeTransformer):
-    def __init__(self, seed):
+class ApexTransformer(ast.NodeTransformer):
+    def __init__(self, seed, file_map, dir_map):
         self.seed = seed
-        self.key_mapping = {}
+        self.file_map = file_map
+        self.dir_map = dir_map
+        self.in_fstring = False
+
+    def _patch_module_path(self, module_path):
+        if not module_path: return module_path
+        parts = module_path.split('.')
+        new_parts = []
+        for p in parts:
+            if p in self.dir_map: new_parts.append(self.dir_map[p])
+            elif p in self.file_map: new_parts.append(self.file_map[p])
+            else: new_parts.append(p)
+        return '.'.join(new_parts)
 
     def visit_Import(self, node):
-        """Xóa bỏ các lệnh import tường minh."""
-        return ast.Pass()
+        for alias in node.names:
+            alias.name = self._patch_module_path(alias.name)
+        return node
 
     def visit_ImportFrom(self, node):
-        """Xóa bỏ các lệnh import from tường minh."""
-        return ast.Pass()
+        node.module = self._patch_module_path(node.module)
+        return node
+
+    def visit_JoinedStr(self, node):
+        old = self.in_fstring
+        self.in_fstring = True
+        self.generic_visit(node)
+        self.in_fstring = old
+        return node
 
     def visit_Constant(self, node):
-        """Mã hóa mọi chuỗi hằng số."""
-        if isinstance(node.value, str) and len(node.value) > 2:
-            if node.value.startswith("__"): return node
-            encrypted = singularity_encrypt(node.value, self.seed)
+        if self.in_fstring: return node
+        if isinstance(node.value, str):
+            if len(node.value) < 1 or node.value.startswith("__"): return node
+            enc = chaos_encrypt(node.value, self.seed)
             return ast.Call(
-                func=ast.Name(id='_s_dec', ctx=ast.Load()),
-                args=[ast.Constant(value=encrypted), ast.Constant(value=self.seed)],
-                keywords=[]
+                func=ast.Attribute(value=ast.Name(id=CORE_LIB_NAME, ctx=ast.Load()), attr='_s', ctx=ast.Load()),
+                args=[ast.Constant(value=enc)], keywords=[]
             )
         return node
 
 # ------------------------------------------------------------------------------
-# 4. MAIN BUILD PIPELINE
+# 3. MAIN PIPELINE
 # ------------------------------------------------------------------------------
-def step_info(msg):
-    print(f"\n\033[92m[GOD-EYE-V7]\033[0m ➤ {msg}")
+def rand_name(length=14):
+    return "_X_" + "".join(random.choices(string.ascii_letters + string.digits, k=length))
 
 def main():
-    t_start = time.time()
+    t0 = time.time()
+    build_seed = random.randint(2000000, 9000000)
     
-    # Chuẩn bị môi trường
-    if os.path.exists(RELEASE_DIR): shutil.rmtree(RELEASE_DIR)
-    if os.path.exists(BUILD_TEMP): shutil.rmtree(BUILD_TEMP)
+    for d in [RELEASE_DIR, INSPECT_DIR, BUILD_TEMP]:
+        if os.path.exists(d): shutil.rmtree(d)
+    
     os.makedirs(os.path.join(RELEASE_DIR, "app"), exist_ok=True)
+    os.makedirs(INSPECT_DIR, exist_ok=True)
     
-    shutil.copytree(SOURCE_DIR, os.path.join(BUILD_TEMP, "app"))
-    for f in ["run_gui.py", "launcher.py"]:
-        if os.path.exists(f): shutil.copy(f, os.path.join(BUILD_TEMP, f))
+    print("🚀 [BƯỚC 1] Khởi tạo không gian Overlord Apex...")
+    shutil.copytree(SOURCE_DIR, os.path.join(BUILD_TEMP, SOURCE_DIR))
+    shutil.copy(ENTRY_GUI, os.path.join(BUILD_TEMP, ENTRY_GUI))
 
-    # Obfuscation Stage
-    step_info("Đang thực thi biến đổi Singularity (AST Obfuscation)...")
-    all_files = []
+    dir_map = {"core": rand_name(10), "steps": rand_name(10), "services": rand_name(10), "ui": rand_name(10)}
+    file_map = {}
     for root, _, files in os.walk(BUILD_TEMP):
         for f in files:
-            if f.endswith(".py"): all_files.append(os.path.join(root, f))
+            if f.endswith(".py") and f not in ["__init__.py", "launcher.py", ENTRY_GUI]:
+                file_map[f[:-3]] = rand_name(16)
+    file_map[ENTRY_GUI[:-3]] = rand_name(16)
+    new_gui_name = file_map[ENTRY_GUI[:-3]]
 
-    for path in all_files:
-        rel = os.path.relpath(path, BUILD_TEMP).replace("\\", "/")
-        is_sensitive = any(s in rel for s in SENSITIVE_FILES)
-        
-        with open(path, "r", encoding="utf-8") as f:
-            source = f.read()
+    # SINH BYTECODE VÀ XUẤT FILE ĐỂ GIẤU LÊN SERVER
+    core_bytecode_b64 = get_encrypted_core_bytecode(build_seed)
+    cloud_blob_path = os.path.join(RELEASE_DIR, "core_blob.enc")
+    with open(cloud_blob_path, "w", encoding="utf-8") as f:
+        f.write(core_bytecode_b64)
+    print(f"✅ ĐÃ TẠO FILE BẢO MẬT: {cloud_blob_path} (Hãy upload file này lên Supabase)")
 
-        try:
-            tree = ast.parse(source)
-            f_seed = random.randint(500000, 2000000)
-            transformer = SingularityObfuscator(f_seed)
-            new_tree = transformer.visit(tree)
-            ast.fix_missing_locations(new_tree)
-            processed_code = ast.unparse(new_tree)
-        except Exception as e:
-            processed_code = source
-
-        # Lắp ráp lớp bảo vệ God-Eye
-        final_code = DECRYPTOR_CORE + "\n"
-        if is_sensitive:
-            final_code += generate_advanced_sentinel(f_seed) + "\n"
-        final_code += processed_code
-        
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(final_code)
-
-    # Biên dịch Binary
-    step_info("Biên dịch mã máy C-Level (.pyd)...")
-    target_pys = []
-    for root, _, files in os.walk(os.path.join(BUILD_TEMP, "app")):
+    print("🚀 [BƯỚC 2] Thực thi Obfuscation...")
+    for root, _, files in os.walk(BUILD_TEMP):
         for f in files:
-            if f.endswith(".py") and f != "__init__.py":
-                target_pys.append(os.path.join(root, f))
-    target_pys.append(os.path.join(BUILD_TEMP, "run_gui.py"))
+            if f.endswith(".py") and f != "launcher.py":
+                p = os.path.join(root, f)
+                with open(p, "r", encoding="utf-8") as file: src = file.read()
+                try:
+                    tree = ast.parse(src)
+                    tree.body.insert(0, ast.Import(names=[ast.alias(name=CORE_LIB_NAME, asname=None)]))
+                    if f == ENTRY_GUI or 'class AppWrapper' in src:
+                        new_body = []
+                        found_entry = False
+                        for node in tree.body:
+                            is_main = (isinstance(node, ast.If) and isinstance(node.test, ast.Compare) and "__name__" in ast.unparse(node.test))
+                            if is_main and not found_entry:
+                                new_func = ast.FunctionDef(
+                                    name=VOID_ENTRY, args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
+                                    body=node.body, decorator_list=[], returns=None
+                                )
+                                new_body.append(new_func); found_entry = True
+                            else: new_body.append(node)
+                        tree.body = new_body
+                    transformer = ApexTransformer(build_seed, file_map, dir_map)
+                    ast.fix_missing_locations(transformer.visit(tree))
+                    with open(p, "w", encoding="utf-8") as file: file.write(ast.unparse(tree))
+                except Exception as e: print(f"   [!] Error {f}: {e}")
 
+    print("🚀 [BƯỚC 3] Thực thi Ghosting vật lý...")
+    for old_d, new_d in dir_map.items():
+        op, np = os.path.join(BUILD_TEMP, "app", old_d), os.path.join(BUILD_TEMP, "app", new_d)
+        if os.path.exists(op): os.rename(op, np)
+    for root, _, files in os.walk(BUILD_TEMP):
+        for f in files:
+            if f.endswith(".py") and f[:-3] in file_map:
+                os.rename(os.path.join(root, f), os.path.join(root, f"{file_map[f[:-3]]}.py"))
+
+    print("🚀 [BƯỚC 4] Biên dịch Cython (.pyd)...")
+    curr = os.getcwd(); abs_rel = os.path.abspath(RELEASE_DIR)
+    os.chdir(BUILD_TEMP)
+    targets = []
+    for root, _, files in os.walk("."):
+        for f in files:
+            if f.endswith(".py") and f not in ["launcher.py", "__init__.py"]:
+                targets.append(os.path.relpath(os.path.join(root, f), "."))
+    setup(ext_modules=cythonize(targets, quiet=True), script_args=["build_ext", "--build-lib", abs_rel])
+    os.chdir(curr)
+    
+    for root, _, files in os.walk(BUILD_TEMP):
+        for f in files:
+            if f == "__init__.py":
+                src = os.path.join(root, f); dst = os.path.join(RELEASE_DIR, os.path.relpath(src, BUILD_TEMP))
+                os.makedirs(os.path.dirname(dst), exist_ok=True); shutil.copy2(src, dst)
+
+    print("🚀 [BƯỚC 5] Tạo Launcher Cloud-Sync (Triệt tiêu Hardcode)...")
+    launcher_code = f"""
+import os, sys, subprocess, ctypes, base64, marshal, types, traceback, urllib.request
+
+def write_log_and_show_error(base_dir, msg, title="Security Error"):
     try:
-        setup(
-            ext_modules=cythonize(
-                target_pys, 
-                compiler_directives={'language_level': "3", 'always_allow_keywords': True, 'profile': False},
-                quiet=True
-            ),
-            script_args=["build_ext", "--build-lib", RELEASE_DIR]
+        log_path = os.path.join(base_dir, "crash_log.txt")
+        with open(log_path, "w", encoding="utf-8") as f: f.write(f"--- {{title}} ---\\n{{msg}}")
+    except: pass
+    try: ctypes.windll.user32.MessageBoxW(0, str(msg), str(title), 16)
+    except: pass
+
+def find_python_exe(base_dir):
+    candidates = [os.path.join(base_dir, "venv", "Scripts", "python.exe"), os.path.join(base_dir, "Scripts", "python.exe")]
+    for c in candidates:
+        if os.path.exists(c): return os.path.normpath(c)
+    return None
+
+def main():
+    try:
+        if ctypes.windll.kernel32.IsDebuggerPresent(): sys.exit(0)
+        exe_path = os.path.abspath(sys.argv[0]) if getattr(sys, 'frozen', False) else os.path.abspath(__file__)
+        base_dir = os.path.dirname(exe_path)
+        posix_base = base_dir.replace('\\\\', '/')
+        python_exe = find_python_exe(base_dir)
+
+        if not python_exe:
+            write_log_and_show_error(base_dir, "Môi trường không hợp lệ! Vui lòng cài đặt lại.", "System Error")
+            sys.exit(1)
+
+        # LOGIC TẢI LINH HỒN TỪ CLOUD (Giấu hoàn toàn khỏi EXE)
+        payload_template = (
+            "import sys, os, base64, marshal, types, ctypes, traceback, urllib.request\\n"
+            "try:\\n"
+            "    # Buoc 1: Tai logic giai ma tu Supabase\\n"
+            "    url = '{CORE_API_URL}'\\n"
+            "    req = urllib.request.Request(url, headers={{'User-Agent': 'Mozilla/5.0'}})\\n"
+            "    with urllib.request.urlopen(req, timeout=15) as response:\\n"
+            "        core_data = response.read().decode('utf-8')\\n"
+            "    # Buoc 2: Tiem vao RAM\\n"
+            "    b = marshal.loads(base64.b64decode(core_data))\\n"
+            "    m = types.ModuleType('{CORE_LIB_NAME}')\\n"
+            "    exec(b, m.__dict__)\\n"
+            "    sys.modules['{CORE_LIB_NAME}'] = m\\n"
+            "    # Buoc 3: Run GUI\\n"
+            "    sys.path.insert(0, r'{{base_dir}}')\\n"
+            "    g = __import__('{new_gui_name}')\\n"
+            "    getattr(g, '{VOID_ENTRY}')()\\n"
+            "except Exception as e:\\n"
+            "    ctypes.windll.user32.MessageBoxW(0, 'Khong the ket noi Server bao mat! Kiem tra Internet.\\\\n\\\\n' + str(e), 'Cloud Fail', 16)\\n"
         )
-    except Exception as e:
-        print(f"❌ Lỗi biên dịch: {e}")
+        
+        payload = payload_template.replace("{{base_dir}}", posix_base)
+        b64_payload = base64.b64encode(payload.encode('utf-8')).decode('utf-8')
+        final_cmd = f"import base64; exec(base64.b64decode('{{b64_payload}}').decode('utf-8'))"
 
-    # Đóng gói OneFile
-    step_info("Nén 'God-Eye' vào file thực thi duy nhất (Nuitka)...")
-    icon = os.path.join(SOURCE_DIR, "assets", "icon.ico")
-    nuitka_cmd = [
-        "python", "-m", "nuitka", "--standalone", "--disable-console",
-        "--onefile", "--remove-output", "--lto=yes", "--jobs=4",
-        f"--output-dir={RELEASE_DIR}",
-        "--output-filename=AI_Reup_Pro_V7.exe",
-        f"--windows-icon-from-ico={icon}" if os.path.exists(icon) else "",
-        os.path.join(BUILD_TEMP, "launcher.py")
-    ]
-    subprocess.run([c for c in nuitka_cmd if c], check=True)
+        CREATE_NO_WINDOW = 0x08000000
+        subprocess.run([python_exe, "-c", final_cmd], cwd=base_dir, creationflags=CREATE_NO_WINDOW)
 
-    # Finalize
-    step_info("Hoàn tất cấu trúc bản thương mại...")
-    final_app_path = os.path.join(RELEASE_DIR, "app")
-    shutil.copytree(os.path.join(SOURCE_DIR, "assets"), os.path.join(final_app_path, "assets"), dirs_exist_ok=True)
-    if os.path.exists("config.dist.yaml"):
-        shutil.copy("config.dist.yaml", os.path.join(RELEASE_DIR, "config.yaml"))
+    except Exception:
+        write_log_and_show_error(os.getcwd(), traceback.format_exc(), "Launcher Crash")
 
-    # Cleanup
-    for trash in [BUILD_TEMP, "build"]:
-        if os.path.exists(trash): shutil.rmtree(trash)
+if __name__ == "__main__": main()
+"""
+    with open(os.path.join(BUILD_TEMP, "launcher.py"), "w", encoding="utf-8") as f: f.write(launcher_code)
 
-    duration = time.time() - t_start
-    step_info(f"🚀 BUILD V7 THÀNH CÔNG! Tổng thời gian: {duration:.2f}s")
-    print(f"📍 Sản phẩm: {os.path.abspath(RELEASE_DIR)}")
+    print("🚀 [BƯỚC 6] Đóng gói Nuitka (V48.0 Cloud-Ghost)...")
+    icon_p = os.path.join(SOURCE_DIR, "assets", "icon.ico")
+    n_cmd = ["python", "-m", "nuitka", "--standalone", "--onefile", "--windows-console-mode=disable", "--remove-output", f"--output-dir={RELEASE_DIR}", "--output-filename=AI_Reup_Pro_V48.exe", os.path.join(BUILD_TEMP, "launcher.py")]
+    if os.path.exists(icon_p): n_cmd.insert(-1, f"--windows-icon-from-ico={icon_p}")
+    subprocess.run(n_cmd, check=True)
+
+    shutil.copytree(os.path.join(SOURCE_DIR, "assets"), os.path.join(RELEASE_DIR, "app", "assets"), dirs_exist_ok=True)
+    if os.path.exists("config.dist.yaml"): shutil.copy("config.dist.yaml", os.path.join(RELEASE_DIR, "config.yaml"))
+    shutil.rmtree("build", ignore_errors=True)
+    
+    print(f"\n✅ BUILD V48.0 HOÀN TẤT!")
+    print(f"👉 FILE CẦN GIẤU LÊN SERVER: {os.path.abspath(cloud_blob_path)}")
+    print(f"👉 Link Cloud hiện tại đang cấu hình: {CORE_API_URL}")
 
 if __name__ == "__main__":
     main()

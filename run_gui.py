@@ -11,6 +11,14 @@ from app.core.security import run_security_check, verify_key_with_server, get_hw
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
+def resource_path(relative_path):
+    """Lấy đường dẫn tuyệt đối tới tài nguyên, chuẩn cho Nuitka và môi trường Dev"""
+    if '__compiled__' in globals() or getattr(sys, 'frozen', False):
+        base_path = os.path.dirname(os.path.abspath(sys.argv[0]))
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
 class LoginPopup(ctk.CTkToplevel):
     """Popup đăng nhập (Modal Dialog)"""
     def __init__(self, master):
@@ -34,6 +42,17 @@ class LoginPopup(ctk.CTkToplevel):
         
         # Sự kiện đóng
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        icon_path = resource_path(os.path.join("app", "assets", "icon.ico"))
+        if os.path.exists(icon_path):
+            self.iconbitmap(icon_path)
+            try:
+                from ctypes import windll
+                myappid = 'overlord.aireup.pro.v1' 
+                windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+            except: pass
+        else:
+            print(f"⚠️ Warning: Không tìm thấy icon tại {icon_path}")
 
     def center_on_screen(self):
         self.update_idletasks()
