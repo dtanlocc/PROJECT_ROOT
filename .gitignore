@@ -27,3 +27,9 @@ overlord_apex_release
 overlord_apex_temp
 over_source_inspect
 env
+
+bin
+_temp
+reup_dist
+reup_video_release
+testEnv

@@ -12,7 +12,6 @@ ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
 def resource_path(relative_path):
-    """Lấy đường dẫn tuyệt đối tới tài nguyên, chuẩn cho Nuitka và môi trường Dev"""
     if '__compiled__' in globals() or getattr(sys, 'frozen', False):
         base_path = os.path.dirname(os.path.abspath(sys.argv[0]))
     else:
@@ -43,6 +42,7 @@ class LoginPopup(ctk.CTkToplevel):
         # Sự kiện đóng
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
+        # Sửa thành:
         icon_path = resource_path(os.path.join("app", "assets", "icon.ico"))
         if os.path.exists(icon_path):
             self.iconbitmap(icon_path)
@@ -94,28 +94,38 @@ class LoginPopup(ctk.CTkToplevel):
 
     def btn_click(self):
         key = self.entry_key.get().strip()
-        if not key:
-            self.lbl_status.configure(text="⚠ Vui lòng nhập License Key!", text_color="#e74c3c")
-            return
+        if not key: return
             
         self.btn_active.configure(state="disabled", text="ĐANG KIỂM TRA...")
-        self.lbl_status.configure(text="Đang kết nối máy chủ...", text_color="#f39c12")
+        self.lbl_status.configure(text="Đang đối chiếu HWID...", text_color="#f39c12")
         self.update() 
         
-        # Gọi Security Check
-        try:
-            success, message = verify_key_with_server(key)
-        except Exception as e:
-            success, message = False, f"Lỗi: {str(e)}"
+        # Gọi Security Check (Trả về thành công + Bytecode)
+        success, result = verify_key_with_server(key)
         
         if success:
-            self.lbl_status.configure(text="✔ Thành công! Đang vào App...", text_color="#2ecc71")
-            self.is_authenticated = True
-            self.update()
-            self.after(500, self.destroy) # Đóng popup
+            # result lúc này chứa chuỗi core_blob (Bytecode)
+            self.load_core_and_start(result)
         else:
             self.btn_active.configure(state="normal", text="KÍCH HOẠT")
-            self.lbl_status.configure(text=f"❌ {message}", text_color="#e74c3c")
+            self.lbl_status.configure(text=f"❌ {result}", text_color="#e74c3c")
+
+    def load_core_and_start(self, core_data):
+        import marshal, types, base64
+        try:
+            # TIÊM RAM FILELESS: Nạp thuật toán AI từ Bytecode vừa lấy được
+            b = marshal.loads(base64.b64decode(core_data))
+            m = types.ModuleType('_core_sys_x64')
+            exec(b, m.__dict__)
+            sys.modules['_core_sys_x64'] = m
+            
+            self.lbl_status.configure(text="✔ Kích hoạt thành công!", text_color="#2ecc71")
+            self.is_authenticated = True
+            self.update()
+            self.after(500, self.destroy)
+        except Exception as e:
+            self.lbl_status.configure(text=f"❌ Lỗi nạp Lõi: {e}", text_color="#e74c3c")
+            self.btn_active.configure(state="normal", text="THỬ LẠI")
 
     def on_close(self):
         self.is_authenticated = False

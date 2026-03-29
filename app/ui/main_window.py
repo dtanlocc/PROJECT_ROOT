@@ -14,7 +14,6 @@ from app.core.engine import ProEngine, is_shm_dll_error, SHM_FIX_MESSAGE, is_met
 
 # 1. Hàm tìm đường dẫn tài nguyên
 def resource_path(relative_path):
-    """Lấy đường dẫn tuyệt đối tới tài nguyên, hoạt động cho cả Dev và PyInstaller/Nuitka"""
     try:
         base_path = sys._MEIPASS
     except Exception:
@@ -80,16 +79,13 @@ class ProGUI(ctk.CTk):
     def __init__(self):
         super().__init__()
         
-        # [FIX] Cờ kiểm soát vòng đời ứng dụng
         self.is_running = True
-        self.poll_log_id = None # ID để hủy lệnh after nếu cần
+        self.poll_log_id = None 
 
-        # 1. SETUP CỬA SỔ
         self.title(f"Pipeline Reup Pro v{__version__}")
         self.geometry("1280x850")
         self.minsize(1100, 750)
         
-        # [FIX] Bắt sự kiện đóng cửa sổ để dừng luồng an toàn
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         icon_path = resource_path(os.path.join("app", "assets", "icon.ico"))
@@ -100,16 +96,12 @@ class ProGUI(ctk.CTk):
                 myappid = 'mycompany.myproduct.subproduct.version' 
                 windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
             except: pass
-        else:
-            print(f"⚠️ Warning: Không tìm thấy icon tại {icon_path}")
         
-        # 2. DETECT HARDWARE
         self.hw_info = "Checking..."
         self.hw_color = "gray"
         self._check_hardware()
         self.last_stream_index = None
         
-        # 3. LOAD CONFIG & INSTALL MODE
         try:
             self.cfg = ConfigLoader.load()
             self.install_mode = ConfigLoader.get_install_mode()
@@ -117,7 +109,6 @@ class ProGUI(ctk.CTk):
             messagebox.showerror("Config Error", f"Lỗi đọc config: {e}")
             sys.exit(1)
 
-        # 4. SETUP LOGGING
         self.log_queue = queue.Queue()
         logger.remove()
         logger.add(LogSink(self.log_queue), format="<green>{time:HH:mm:ss}</green> | <level>{message}</level>", level="INFO")
@@ -125,16 +116,13 @@ class ProGUI(ctk.CTk):
         logger.add("logs/session.log", rotation="5 MB", level="DEBUG")
         sys.stderr = StreamToLogger("INFO") 
 
-        # 5. TRẠNG THÁI ENGINE & PROGRESS
         self.engine = None
         self._progress_queue = queue.Queue()
         self._progress_display = {"completed": 0, "total": 0, "current": []}
 
-        # 6. DỰNG GIAO DIỆN
         self._init_layout()
         self._load_values_to_ui()
 
-        # --- ĐỊNH NGHĨA TAG MÀU SẮC LOG ---
         self.console.tag_config("info", foreground="#dcdcdc")      
         self.console.tag_config("success", foreground="#2ecc71")   
         self.console.tag_config("error", foreground="#e74c3c")     
@@ -143,41 +131,29 @@ class ProGUI(ctk.CTk):
         self.console.tag_config("step", foreground="#3498db")      
 
         self.active_streams = {} 
-        
-        # 7. LOOP LOG (Bắt đầu sau 100ms)
-        self.poll_log_id = self.after(100, self._safe_poll_log) # Gọi qua wrapper an toàn
+        self.poll_log_id = self.after(100, self._safe_poll_log) 
 
     def on_closing(self):
-        """Hàm xử lý khi tắt ứng dụng"""
-        self.is_running = False # Ngắt cờ để dừng vòng lặp after
-        
-        # Hủy các lệnh after đang chờ
+        self.is_running = False 
         if self.poll_log_id:
-            try:
-                self.after_cancel(self.poll_log_id)
+            try: self.after_cancel(self.poll_log_id)
             except: pass
-            
-        self.destroy() # Hủy giao diện
-        sys.exit(0) # Thoát hẳn python
+        self.destroy() 
+        sys.exit(0) 
 
     def _safe_poll_log(self):
-        """Wrapper an toàn để gọi _poll_log và bắt ngoại lệ widget"""
         if not self.is_running: return
         try:
             self._poll_log()
         except Exception:
-            pass # Bỏ qua lỗi nếu widget bị hủy giữa chừng
+            pass 
         finally:
             if self.is_running:
-                try:
-                    self.poll_log_id = self.after(30, self._safe_poll_log)
+                try: self.poll_log_id = self.after(30, self._safe_poll_log)
                 except: pass
 
     def _poll_log(self):
-        """Logic cập nhật Log và Progress thực tế"""
         if not self.winfo_exists(): return 
-
-        # 1. Xử lý Progress Bar tổng
         try:
             while not self._progress_queue.empty():
                 item = self._progress_queue.get_nowait()
@@ -186,10 +162,8 @@ class ProGUI(ctk.CTk):
                     self._update_progress_ui(completed, total, current)
         except: pass
 
-        # 2. Xử lý Console Log
         try:
             if not self.console.winfo_exists(): return 
-
             self.console.configure(state="normal")
             has_new_log = False
             
@@ -197,17 +171,14 @@ class ProGUI(ctk.CTk):
                 msg = self.log_queue.get_nowait()
                 has_new_log = True
                 
-                # Logic xử lý Stream/Log
                 if msg.startswith("[STREAM]"):
                     parts = [p.strip() for p in msg.split("|")]
                     if len(parts) >= 3:
                         video_id = parts[1]
                         content = " | ".join(parts[2:])
-                        
                         if video_id in self.active_streams:
                             idx = self.active_streams[video_id]
                             self.console.delete(idx, f"{idx} lineend + 1c")
-                        
                         self.active_streams[video_id] = self.console.index("end-1c")
                         self.console.insert("end", content + "\n", "debug")
                 else:
@@ -224,19 +195,15 @@ class ProGUI(ctk.CTk):
 
             if has_new_log:
                 self.console.see("end")
-                if self.is_running: 
-                    self.update_idletasks() 
+                if self.is_running: self.update_idletasks() 
                 
-        except Exception: 
-            pass
+        except Exception: pass
         finally:
             if self.is_running and self.console.winfo_exists():
-                try:
-                    self.console.configure(state="disabled")
+                try: self.console.configure(state="disabled")
                 except: pass
 
     def _check_hardware(self):
-        """Kiểm tra GPU/PyTorch để hiện lên sidebar."""
         try:
             import torch
             self._set_hw_from_torch(torch)
@@ -244,8 +211,7 @@ class ProGUI(ctk.CTk):
             if "already registered" in str(e):
                 torch = __import__("sys").modules.get("torch")
                 if torch is not None:
-                    try:
-                        self._set_hw_from_torch(torch)
+                    try: self._set_hw_from_torch(torch)
                     except Exception:
                         self.hw_info = "GPU: (PyTorch OK, type conflict)"
                         self.hw_color = "#2ecc71"
@@ -260,8 +226,7 @@ class ProGUI(ctk.CTk):
     def _set_hw_from_torch(self, torch):
         if torch.cuda.is_available():
             gpu_name = torch.cuda.get_device_name(0)
-            if len(gpu_name) > 25:
-                gpu_name = gpu_name[:22] + "..."
+            if len(gpu_name) > 25: gpu_name = gpu_name[:22] + "..."
             self.hw_info = f"GPU: {gpu_name}"
             self.hw_color = "#2ecc71"
         else:
@@ -282,15 +247,12 @@ class ProGUI(ctk.CTk):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # === SIDEBAR (Bên trái) ===
         self.sidebar = ctk.CTkFrame(self, width=320, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         self.sidebar.grid_rowconfigure(7, weight=1)
 
-        # Logo
         ctk.CTkLabel(self.sidebar, text="PIPELINE\nREUP PRO", font=ctk.CTkFont(size=26, weight="bold")).grid(row=0, column=0, padx=20, pady=(40, 10))
         
-        # Info Box
         info_frame = ctk.CTkFrame(self.sidebar, fg_color="#2b2b2b")
         info_frame.grid(row=1, column=0, padx=15, pady=(0, 20), sticky="ew")
         ctk.CTkLabel(info_frame, text="● LICENSE: ACTIVE", text_color="#2ecc71", font=ctk.CTkFont(size=12, weight="bold")).pack(pady=(10, 2))
@@ -299,7 +261,6 @@ class ProGUI(ctk.CTk):
         ctk.CTkLabel(info_frame, text=f"● CÀI ĐẶT: {install_label}", text_color="#9b59b6", font=ctk.CTkFont(size=12, weight="bold")).pack(pady=2)
         ctk.CTkLabel(info_frame, text=f"● {self.hw_info}", text_color=self.hw_color, font=ctk.CTkFont(size=12, weight="bold")).pack(pady=(2, 10))
 
-        # Buttons
         self.btn_run = ctk.CTkButton(self.sidebar, text="▶ BẮT ĐẦU XỬ LÝ", height=55, fg_color="#27ae60", hover_color="#2ecc71", font=ctk.CTkFont(size=15, weight="bold"), command=self._on_start)
         self.btn_run.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
 
@@ -312,11 +273,9 @@ class ProGUI(ctk.CTk):
         self.btn_open_out = ctk.CTkButton(self.sidebar, text="📂 MỞ THƯ MỤC OUTPUT", height=40, fg_color="#e67e22", hover_color="#d35400", command=self._open_output_folder)
         self.btn_open_out.grid(row=5, column=0, padx=20, pady=10, sticky="ew")
 
-        # Status
         self.lbl_status = ctk.CTkLabel(self.sidebar, text="READY TO RUN", font=ctk.CTkFont(size=14, weight="bold"), text_color="gray")
         self.lbl_status.grid(row=8, column=0, padx=20, pady=30)
 
-        # === MAIN CONTENT ===
         self.tabview = ctk.CTkTabview(self)
         self.tabview.grid(row=0, column=1, padx=20, pady=10, sticky="nsew")
 
@@ -332,12 +291,10 @@ class ProGUI(ctk.CTk):
         self._ui_sub_mix()
         self._ui_sys()
 
-    # --- TAB 1: DASHBOARD (PROGRESS + LOG) ---
     def _ui_dashboard(self):
         self.tab_dashboard.grid_columnconfigure(0, weight=1)
         self.tab_dashboard.grid_rowconfigure(2, weight=1)
 
-        # 1. Thanh tiến trình tổng (Video X/Y, bước hiện tại)
         self.progress_frame = ctk.CTkFrame(self.tab_dashboard, fg_color="transparent")
         self.progress_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=(5, 5))
         self.progress_frame.grid_columnconfigure(1, weight=1)
@@ -347,24 +304,14 @@ class ProGUI(ctk.CTk):
         self.progress_bar.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=2)
         self.progress_bar.set(0)
 
-        # 2. Toolbar (Label + Nút Clear)
         toolbar = ctk.CTkFrame(self.tab_dashboard, fg_color="transparent", height=40)
         toolbar.grid(row=1, column=0, sticky="ew", padx=5, pady=(5, 5))
         ctk.CTkLabel(toolbar, text="LOG HOẠT ĐỘNG (REAL-TIME)", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=5)
         ctk.CTkButton(toolbar, text="🗑 XÓA LOG", width=100, height=30, fg_color="#c0392b", hover_color="#e74c3c", command=self._on_clear_log).pack(side="right", padx=5)
 
-        # 3. Textbox Log
-        self.console = ctk.CTkTextbox(
-            self.tab_dashboard, 
-            font=("Consolas", 12, "bold"),
-            state="disabled", 
-            fg_color="#1e1e1e", 
-            text_color="#dcdcdc"
-        )
+        self.console = ctk.CTkTextbox(self.tab_dashboard, font=("Consolas", 12, "bold"), state="disabled", fg_color="#1e1e1e", text_color="#dcdcdc")
         self.console.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
         
-
-    # --- TAB 2: INPUT / OUTPUT ---
     def _ui_io(self):
         frame = ctk.CTkScrollableFrame(self.tab_io, label_text="Đường dẫn thư mục")
         frame.pack(fill="both", expand=True, padx=10, pady=10)
@@ -375,7 +322,6 @@ class ProGUI(ctk.CTk):
         self.ent_sep = self._add_path_row(frame, "Step 2 (Separated):", self.cfg.pipeline.step2_separated, dir=True)
         self.ent_srt = self._add_path_row(frame, "Step 3 (SRT Raw):", self.cfg.pipeline.step3_srt_raw, dir=True)
 
-    # --- TAB 3: AI CONFIG ---
     def _ui_ai(self):
         frame = ctk.CTkScrollableFrame(self.tab_ai)
         frame.pack(fill="both", expand=True, padx=10, pady=10)
@@ -385,46 +331,45 @@ class ProGUI(ctk.CTk):
         self.combo_demucs_dev = self._add_combo(frame, "Device:", demucs_dev_values, self.cfg.step2.device)
         self.entry_demucs_jobs = self._add_entry(frame, "Threads (Jobs):", self.cfg.step2.jobs)
         self.entry_demucs_shifts = self._add_entry(frame, "Shifts (chất lượng tách, VD: 2):", getattr(self.cfg.step2, "shifts", 2))
-        self.combo_demucs_output = self._add_combo(
-            frame, "Xuất audio:", ["int24", "float32"],
-            "float32" if getattr(self.cfg.step2, "output_float32", False) else "int24"
-        )
+        self.combo_demucs_output = self._add_combo(frame, "Xuất audio:", ["int24", "float32"], "float32" if getattr(self.cfg.step2, "output_float32", False) else "int24")
+        
         self._add_header(frame, "Step 3: Nhận diện Sub (SRT)")
         self.combo_srt_src = self._add_combo(frame, "Nguồn Sub:", ["voice", "image"], self.cfg.step3.srt_source)
         self.combo_whisper = self._add_combo(frame, "Whisper Model (Voice):", ["base", "small", "medium", "large-v2"], self.cfg.step3.model_size)
         self.entry_lang = self._add_entry(frame, "Ngôn ngữ nguồn (VD: zh, en, ja):", self.cfg.step3.language)
         self.entry_cpu_threads = self._add_entry(frame, "Whisper CPU threads (VD: 1):", getattr(self.cfg.step3, "cpu_threads", 1))
+        
         self._add_header(frame, "Cấu hình OCR (Nếu chọn nguồn Sub là Image)")
         self.entry_ocr_lang = self._add_entry(frame, "Mã ngôn ngữ OCR (VD: ch, en):", self.cfg.step3.image_ocr_lang)
-        step_frames = getattr(self.cfg.step3, "image_step_frames", 10)
-        self.entry_ocr_step_frames = self._add_entry(
-            frame,
-            "Cứ mỗi N frame lấy 1 lần (VD: 10). Càng nhỏ = nhiều frame, chậm hơn:",
-            step_frames,
-        )
+        self.entry_ocr_step_frames = self._add_entry(frame, "Cứ mỗi N frame lấy 1 lần (VD: 10):", getattr(self.cfg.step3, "image_step_frames", 10))
+        
         self._add_header(frame, "Step 4: Dịch thuật (Gemini)")
         self.entry_step4_model = self._add_entry(frame, "Model Gemini (VD: gemini-2.5-flash):", self.cfg.step4.model_name)
         self.entry_source_lang = self._add_entry(frame, "Ngôn ngữ nguồn (VD: zh-CN, en):", self.cfg.step4.source_lang)
         self.entry_target_lang = self._add_entry(frame, "Ngôn ngữ đích (VD: vi, en):", self.cfg.step4.target_lang)
         self.entry_max_lines_chunk = self._add_entry(frame, "Số dòng tối đa mỗi chunk (VD: 250):", getattr(self.cfg.step4, "max_lines_per_chunk", 250))
 
-    # --- TAB 4: SUB & MIX ---
     def _ui_sub_mix(self):
         frame = ctk.CTkScrollableFrame(self.tab_sub)
         frame.pack(fill="both", expand=True, padx=10, pady=10)
-        self._add_header(frame, "Step 5: Giao diện Subtitle")
+        
+        # --- PHẦN 1: VIDEO & SUBTITLE ---
+        self._add_header(frame, "Phần 1: Cấu hình Phụ đề (Subtitle)")
         self.entry_font_size = self._add_entry(frame, "Cỡ chữ:", self.cfg.step5.font_size)
         self.entry_max_words_per_line = self._add_entry(frame, "Số từ tối đa mỗi dòng (VD: 10):", getattr(self.cfg.step5, "max_words_per_line", 10))
         self.entry_font_path = self._add_path_row(frame, "Font chữ (.ttf):", self.cfg.step5.font_path, dir=False)
 
-        # Màu chữ (Text) — bảng chọn màu
+        # Hàng: Màu chữ
         tr, tg, tb = _ass_to_rgb(self.cfg.step5.text_color)
         self.step5_text_rgb = (tr, tg, tb)
-        ctk.CTkLabel(frame, text="Màu chữ (Text):", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=10, pady=(10, 2))
         row_text = ctk.CTkFrame(frame, fg_color="transparent")
-        row_text.pack(fill="x", padx=5, pady=2)
-        self.preview_text = ctk.CTkFrame(row_text, width=56, height=32, fg_color=_rgb_hex(tr, tg, tb), corner_radius=6)
+        row_text.pack(fill="x", padx=10, pady=4)
+        ctk.CTkLabel(row_text, text="Màu chữ (Text):", width=300, anchor="w").pack(side="left")
+        
+        self.preview_text = ctk.CTkFrame(row_text, width=80, height=28, fg_color=_rgb_hex(tr, tg, tb), corner_radius=6)
         self.preview_text.pack(side="left", padx=(0, 10))
+        self.preview_text.pack_propagate(False) # Chống co lại
+        
         def pick_text_color():
             rgb_hex = _rgb_hex(*self.step5_text_rgb)
             result = colorchooser.askcolor(initialcolor=rgb_hex, title="Chọn màu chữ")
@@ -434,14 +379,17 @@ class ProGUI(ctk.CTk):
                 self.preview_text.configure(fg_color=_rgb_hex(r, g, b))
         ctk.CTkButton(row_text, text="🎨 Chọn màu", width=120, fg_color="#34495e", hover_color="#2c3e50", command=pick_text_color).pack(side="left")
 
-        # Màu viền (Outline) — bảng chọn màu
+        # Hàng: Màu viền
         or_, og, ob = _ass_to_rgb(self.cfg.step5.outline_color)
         self.step5_outline_rgb = (or_, og, ob)
-        ctk.CTkLabel(frame, text="Màu viền (Outline):", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=10, pady=(10, 2))
         row_out = ctk.CTkFrame(frame, fg_color="transparent")
-        row_out.pack(fill="x", padx=5, pady=2)
-        self.preview_outline = ctk.CTkFrame(row_out, width=56, height=32, fg_color=_rgb_hex(or_, og, ob), corner_radius=6)
+        row_out.pack(fill="x", padx=10, pady=4)
+        ctk.CTkLabel(row_out, text="Màu viền (Outline):", width=300, anchor="w").pack(side="left")
+        
+        self.preview_outline = ctk.CTkFrame(row_out, width=80, height=28, fg_color=_rgb_hex(or_, og, ob), corner_radius=6)
         self.preview_outline.pack(side="left", padx=(0, 10))
+        self.preview_outline.pack_propagate(False)
+        
         def pick_outline_color():
             rgb_hex = _rgb_hex(*self.step5_outline_rgb)
             result = colorchooser.askcolor(initialcolor=rgb_hex, title="Chọn màu viền")
@@ -451,18 +399,24 @@ class ProGUI(ctk.CTk):
                 self.preview_outline.configure(fg_color=_rgb_hex(r, g, b))
         ctk.CTkButton(row_out, text="🎨 Chọn màu", width=120, fg_color="#34495e", hover_color="#2c3e50", command=pick_outline_color).pack(side="left")
 
-        ctk.CTkLabel(frame, text="Vùng quét/che sub (ROI Y):").pack(anchor="w", padx=10, pady=5)
-        self.slider_roi_start, _ = self._add_slider(frame, "Bắt đầu (Top %):", 0.0, 1.0, self.cfg.step5.roi_y_start, is_float=True)
-        self.slider_roi_end, _ = self._add_slider(frame, "Kết thúc (Bottom %):", 0.0, 1.0, self.cfg.step5.roi_y_end, is_float=True)
-        self._add_header(frame, "Step 6: TTS & Mix")
-        self.entry_tts_lang = self._add_entry(frame, "Mã ngôn ngữ đọc (gTTS):", self.cfg.step6.tts_lang)
-        self.slider_vol, _ = self._add_slider(frame, "Âm lượng nhạc nền (dB):", -50, 0, self.cfg.step6.bg_volume, is_float=False)
-        self.slider_pitch, _ = self._add_slider(frame, "Pitch TTS (1.0 = bình thường, 1.2 = cao hơn):", 0.8, 1.5, getattr(self.cfg.step6, "pitch_factor", 1.0), is_float=True)
-        self.entry_tts_volume = self._add_entry(frame, "Âm lượng TTS khi mix (VD: 1.4):", getattr(self.cfg.step6, "tts_volume", 1.4))
-        self.entry_min_words_tts = self._add_entry(frame, "Min từ cho TTS (0 = tắt lặp câu ngắn):", getattr(self.cfg.step6, "min_words_for_tts", 0))
-        self.entry_speedup_short = self._add_entry(frame, "Speedup khi TTS ngắn hơn slot (VD: 1.5):", getattr(self.cfg.step6, "speedup_when_short", 1.5))
+        ctk.CTkLabel(frame, text="Vùng quét/che sub (ROI Y):", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=10, pady=(15, 0))
+        self.slider_roi_start, _ = self._add_slider(frame, "↳ Bắt đầu (Top %):", 0.0, 1.0, self.cfg.step5.roi_y_start, is_float=True)
+        self.slider_roi_end, _ = self._add_slider(frame, "↳ Kết thúc (Bottom %):", 0.0, 1.0, self.cfg.step5.roi_y_end, is_float=True)
+        
+        # --- PHẦN 2: ÂM THANH & MIX ---
+        self._add_header(frame, "Phần 2: Cấu hình Âm thanh (Audio & Mix)")
+        self.entry_tts_lang = self._add_entry(frame, "Mã ngôn ngữ đọc (TTS):", self.cfg.step6.tts_lang)
+        
+        ctk.CTkLabel(frame, text="Bảng điều chỉnh Mixer:", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=10, pady=(15, 0))
+        self.entry_tts_volume = self._add_entry(frame, "↳ Âm lượng giọng AI đọc (VD: 1.4):", getattr(self.cfg.step6, "tts_volume", 1.4))
+        self.slider_vol, _ = self._add_slider(frame, "↳ Âm lượng Nhạc nền (dB):", -50, 0, self.cfg.step6.bg_volume, is_float=False)
+        self.slider_orig_voice_vol, _ = self._add_slider(frame, "↳ Âm lượng Giọng gốc (1=100%, 0=Tắt):", 0.0, 2.0, getattr(self.cfg.step6, "original_voice_volume", 0.2), is_float=True)
+        
+        ctk.CTkLabel(frame, text="Hiệu chỉnh giọng AI (TTS):", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=10, pady=(15, 0))
+        self.slider_pitch, _ = self._add_slider(frame, "↳ Pitch (1.0 = chuẩn, 1.2 = cao):", 0.8, 1.5, getattr(self.cfg.step6, "pitch_factor", 1.0), is_float=True)
+        self.entry_min_words_tts = self._add_entry(frame, "↳ Min từ (0 = tắt lặp câu ngắn):", getattr(self.cfg.step6, "min_words_for_tts", 0))
+        self.entry_speedup_short = self._add_entry(frame, "↳ Tốc độ x khi TTS ngắn (VD: 1.5):", getattr(self.cfg.step6, "speedup_when_short", 1.5))
 
-    # --- TAB 5: SYSTEM ---
     def _ui_sys(self):
         frame = ctk.CTkScrollableFrame(self.tab_sys)
         frame.pack(fill="both", expand=True, padx=10, pady=10)
@@ -478,62 +432,82 @@ class ProGUI(ctk.CTk):
         ctk.CTkLabel(parent, text=text, font=ctk.CTkFont(size=16, weight="bold"), text_color="#3498db").pack(anchor="w", padx=10, pady=(20, 5))
 
     def _add_path_row(self, parent, label, value, dir=True):
-        f = ctk.CTkFrame(parent, fg_color="transparent"); f.pack(fill="x", padx=5, pady=2)
-        ctk.CTkLabel(f, text=label, width=150, anchor="w").pack(side="left")
-        ent = ctk.CTkEntry(f); ent.pack(side="left", fill="x", expand=True, padx=5); ent.insert(0, str(value))
+        f = ctk.CTkFrame(parent, fg_color="transparent")
+        f.pack(fill="x", padx=10, pady=4)
+        # Chốt cứng Label 300px
+        ctk.CTkLabel(f, text=label, width=300, anchor="w").pack(side="left")
+        
+        ent = ctk.CTkEntry(f)
+        # Dành chỗ 50px cho nút bên phải, entry tự giãn
+        ent.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        ent.insert(0, str(value))
+        
         def pick():
             path = filedialog.askdirectory(title="Chọn thư mục") if dir else filedialog.askopenfilename(title="Chọn file")
             if path: ent.delete(0, "end"); ent.insert(0, path)
-        ctk.CTkButton(f, text="📂", width=40, fg_color="#34495e", hover_color="#2c3e50", command=pick).pack(side="right")
+            
+        ctk.CTkButton(f, text="📂", width=50, fg_color="#34495e", hover_color="#2c3e50", command=pick).pack(side="right")
         return ent
 
     def _add_entry(self, parent, label, value):
-        f = ctk.CTkFrame(parent, fg_color="transparent"); f.pack(fill="x", padx=5, pady=2)
-        ctk.CTkLabel(f, text=label, width=200, anchor="w").pack(side="left")
-        ent = ctk.CTkEntry(f); ent.pack(side="left", fill="x", expand=True); ent.insert(0, str(value))
+        f = ctk.CTkFrame(parent, fg_color="transparent")
+        f.pack(fill="x", padx=10, pady=4)
+        ctk.CTkLabel(f, text=label, width=300, anchor="w").pack(side="left")
+        
+        ent = ctk.CTkEntry(f)
+        # padding phải 60px để bằng với các hàng có nút/slider
+        ent.pack(side="left", fill="x", expand=True, padx=(0, 60))
+        ent.insert(0, str(value))
         return ent
 
     def _add_combo(self, parent, label, values, value):
-        f = ctk.CTkFrame(parent, fg_color="transparent"); f.pack(fill="x", padx=5, pady=2)
-        ctk.CTkLabel(f, text=label, width=200, anchor="w").pack(side="left")
-        cb = ctk.CTkOptionMenu(f, values=values); cb.pack(side="left", fill="x", expand=True); cb.set(str(value))
+        f = ctk.CTkFrame(parent, fg_color="transparent")
+        f.pack(fill="x", padx=10, pady=4)
+        ctk.CTkLabel(f, text=label, width=300, anchor="w").pack(side="left")
+        
+        cb = ctk.CTkOptionMenu(f, values=values)
+        # padding phải 60px
+        cb.pack(side="left", fill="x", expand=True, padx=(0, 60))
+        cb.set(str(value))
         return cb
 
     def _add_slider(self, parent, label, vmin, vmax, val, is_float=False):
-        f = ctk.CTkFrame(parent, fg_color="transparent"); f.pack(fill="x", padx=5, pady=2)
-        ctk.CTkLabel(f, text=label, width=200, anchor="w").pack(side="left")
-        lbl = ctk.CTkLabel(f, text=str(val), width=50); lbl.pack(side="right")
+        f = ctk.CTkFrame(parent, fg_color="transparent")
+        f.pack(fill="x", padx=10, pady=4)
+        ctk.CTkLabel(f, text=label, width=300, anchor="w").pack(side="left")
+        
         def update(v): lbl.configure(text="{:.2f}".format(v) if is_float else "{:.0f}".format(v))
-        sl = ctk.CTkSlider(f, from_=vmin, to=vmax, command=update); sl.set(val); sl.pack(side="left", fill="x", expand=True, padx=10)
+        
+        sl = ctk.CTkSlider(f, from_=vmin, to=vmax, command=update)
+        sl.set(val)
+        sl.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        # Chốt cứng Label hiện số 50px sát lề phải
+        lbl = ctk.CTkLabel(f, text=str(val), width=50, anchor="e")
+        lbl.pack(side="right")
         return sl, lbl
 
     def _load_values_to_ui(self): pass
 
     def _apply_cfg_to_ui(self):
-        """Đổ lại giá trị config vào UI (dùng cho nút reset)."""
         c = self.cfg
-        # IO
         _set_entry(self.ent_input, c.pipeline.input_videos)
         _set_entry(self.ent_output, c.pipeline.step6_final)
-        # Step2
         self.combo_demucs_model.set(str(c.step2.model))
         self.combo_demucs_dev.set(str(c.step2.device))
         _set_entry(self.entry_demucs_jobs, c.step2.jobs)
         _set_entry(self.entry_demucs_shifts, getattr(c.step2, "shifts", 2))
         self.combo_demucs_output.set("float32" if getattr(c.step2, "output_float32", False) else "int24")
-        # Step3
         self.combo_srt_src.set(str(c.step3.srt_source))
         self.combo_whisper.set(str(c.step3.model_size))
         _set_entry(self.entry_lang, c.step3.language)
         _set_entry(self.entry_cpu_threads, getattr(c.step3, "cpu_threads", 1))
         _set_entry(self.entry_ocr_lang, c.step3.image_ocr_lang)
         _set_entry(self.entry_ocr_step_frames, getattr(c.step3, "image_step_frames", 10))
-        # Step4
         _set_entry(self.entry_step4_model, c.step4.model_name)
         _set_entry(self.entry_source_lang, c.step4.source_lang)
         _set_entry(self.entry_target_lang, c.step4.target_lang)
         _set_entry(self.entry_max_lines_chunk, getattr(c.step4, "max_lines_per_chunk", 250))
-        # Step5
         _set_entry(self.entry_font_size, c.step5.font_size)
         _set_entry(self.entry_max_words_per_line, getattr(c.step5, "max_words_per_line", 10))
         _set_entry(self.entry_font_path, c.step5.font_path)
@@ -545,19 +519,22 @@ class ProGUI(ctk.CTk):
         self.preview_outline.configure(fg_color=_rgb_hex(or_, og, ob))
         self.slider_roi_start.set(float(c.step5.roi_y_start))
         self.slider_roi_end.set(float(c.step5.roi_y_end))
-        # Step6
+        
+        # Load Data Step 6
         _set_entry(self.entry_tts_lang, c.step6.tts_lang)
         self.slider_vol.set(float(c.step6.bg_volume))
         self.slider_pitch.set(float(getattr(c.step6, "pitch_factor", 1.0)))
+        
+        self.slider_orig_voice_vol.set(float(getattr(c.step6, "original_voice_volume", 0.2)))
+        
         _set_entry(self.entry_tts_volume, getattr(c.step6, "tts_volume", 1.4))
         _set_entry(self.entry_min_words_tts, getattr(c.step6, "min_words_for_tts", 0))
         _set_entry(self.entry_speedup_short, getattr(c.step6, "speedup_when_short", 1.5))
-        # System
         _set_entry(self.ent_ffmpeg, c.ffmpeg_bin or "")
         _set_textbox(self.txt_keys, ",\n".join(c.step4.gemini_api_keys))
 
     def _on_reset_defaults(self):
-        if self.is_running:
+        if self.is_running_pipeline:
             messagebox.showwarning("Đang chạy", "Hãy đợi pipeline chạy xong rồi reset.")
             return
         try:
@@ -568,7 +545,6 @@ class ProGUI(ctk.CTk):
             messagebox.showerror("Lỗi reset", str(e))
 
     def _update_progress_ui(self, completed: int, total: int, current: list):
-        """Cập nhật thanh tiến trình và nhãn (gọi từ main thread)."""
         self._progress_display["completed"] = completed
         self._progress_display["total"] = total
         self._progress_display["current"] = current
@@ -579,18 +555,14 @@ class ProGUI(ctk.CTk):
         pct = completed / total
         self.progress_bar.set(pct)
         cur_text = " | ".join(current) if current else "Đang chờ..."
-        self.lbl_progress.configure(
-            text=f"Video {completed}/{total} ({int(pct * 100)}%) — {cur_text}"
-        )
+        self.lbl_progress.configure(text=f"Video {completed}/{total} ({int(pct * 100)}%) — {cur_text}")
 
     def _on_clear_log(self):
-        """Xóa sạch nội dung trong textbox log"""
         self.console.configure(state="normal")
         self.console.delete("0.0", "end")
         self.console.configure(state="disabled")
         logger.info("🧹 Log đã được xóa.")
 
-    # --- ACTIONS ---
     def _on_save_config(self):
         try:
             c = self.cfg
@@ -599,60 +571,48 @@ class ProGUI(ctk.CTk):
             c.step2.model = self.combo_demucs_model.get()
             c.step2.device = self.combo_demucs_dev.get()
             c.step2.jobs = int(self.entry_demucs_jobs.get() or 1)
-            try:
-                c.step2.shifts = max(1, int(self.entry_demucs_shifts.get().strip() or 2))
-            except (ValueError, AttributeError):
-                c.step2.shifts = 2
+            try: c.step2.shifts = max(1, int(self.entry_demucs_shifts.get().strip() or 2))
+            except: c.step2.shifts = 2
             c.step2.output_float32 = self.combo_demucs_output.get() == "float32"
             c.step3.srt_source = self.combo_srt_src.get()
             c.step3.model_size = self.combo_whisper.get()
             c.step3.language = self.entry_lang.get()
-            try:
-                c.step3.cpu_threads = max(1, int(self.entry_cpu_threads.get().strip() or 1))
-            except (ValueError, AttributeError):
-                c.step3.cpu_threads = 1
+            try: c.step3.cpu_threads = max(1, int(self.entry_cpu_threads.get().strip() or 1))
+            except: c.step3.cpu_threads = 1
             c.step3.image_ocr_lang = self.entry_ocr_lang.get()
-            try:
-                c.step3.image_step_frames = max(1, int(self.entry_ocr_step_frames.get().strip() or 10))
-            except (ValueError, AttributeError):
-                c.step3.image_step_frames = 10
+            try: c.step3.image_step_frames = max(1, int(self.entry_ocr_step_frames.get().strip() or 10))
+            except: c.step3.image_step_frames = 10
             c.step4.model_name = self.entry_step4_model.get().strip() or "gemini-2.5-flash"
             c.step4.source_lang = self.entry_source_lang.get().strip() or "zh-CN"
             c.step4.target_lang = self.entry_target_lang.get()
-            try:
-                c.step4.max_lines_per_chunk = max(1, int(self.entry_max_lines_chunk.get().strip() or 250))
-            except (ValueError, AttributeError):
-                c.step4.max_lines_per_chunk = 250
+            try: c.step4.max_lines_per_chunk = max(1, int(self.entry_max_lines_chunk.get().strip() or 250))
+            except: c.step4.max_lines_per_chunk = 250
             c.step5.font_size = int(self.entry_font_size.get() or 45)
-            try:
-                c.step5.max_words_per_line = max(1, int(self.entry_max_words_per_line.get().strip() or 10))
-            except (ValueError, AttributeError):
-                c.step5.max_words_per_line = 10
+            try: c.step5.max_words_per_line = max(1, int(self.entry_max_words_per_line.get().strip() or 10))
+            except: c.step5.max_words_per_line = 10
             c.step5.font_path = self.entry_font_path.get()
             c.step5.text_color = [*self.step5_text_rgb, 255]
             c.step5.outline_color = [*self.step5_outline_rgb, 255]
             c.step5.roi_y_start = float(self.slider_roi_start.get())
             c.step5.roi_y_end = float(self.slider_roi_end.get())
+            
+            # Lưu Data Step 6
             c.step6.tts_lang = self.entry_tts_lang.get()
             c.step6.bg_volume = float(self.slider_vol.get())
-            try:
-                c.step6.pitch_factor = float(self.slider_pitch.get())
-            except (ValueError, TypeError):
-                c.step6.pitch_factor = 1.0
-            try:
-                c.step6.tts_volume = float(self.entry_tts_volume.get().strip() or 1.4)
-            except (ValueError, AttributeError):
-                c.step6.tts_volume = 1.4
-            try:
-                c.step6.min_words_for_tts = max(0, int(self.entry_min_words_tts.get().strip() or 0))
-            except (ValueError, AttributeError):
-                c.step6.min_words_for_tts = 0
-            try:
-                c.step6.speedup_when_short = max(0.5, float(self.entry_speedup_short.get().strip() or 1.5))
-            except (ValueError, AttributeError):
-                c.step6.speedup_when_short = 1.5
-            c.ffmpeg_bin = self.ent_ffmpeg.get().strip() or None
+            try: c.step6.pitch_factor = float(self.slider_pitch.get())
+            except: c.step6.pitch_factor = 1.0
+                
+            try: c.step6.original_voice_volume = float(self.slider_orig_voice_vol.get())
+            except: c.step6.original_voice_volume = 0.2
+                
+            try: c.step6.tts_volume = float(self.entry_tts_volume.get().strip() or 1.4)
+            except: c.step6.tts_volume = 1.4
+            try: c.step6.min_words_for_tts = max(0, int(self.entry_min_words_tts.get().strip() or 0))
+            except: c.step6.min_words_for_tts = 0
+            try: c.step6.speedup_when_short = max(0.5, float(self.entry_speedup_short.get().strip() or 1.5))
+            except: c.step6.speedup_when_short = 1.5
             
+            c.ffmpeg_bin = self.ent_ffmpeg.get().strip() or None
             keys_raw = self.txt_keys.get("0.0", "end").strip()
             c.step4.gemini_api_keys = [k.strip() for k in keys_raw.split(",") if k.strip()]
 
@@ -663,7 +623,6 @@ class ProGUI(ctk.CTk):
                     elif isinstance(v, Path): d[k] = str(v)
                 return d
             data = path_to_str(data)
-            # Ghi step5 màu dạng list [R,G,B,A] cho dễ đọc trong YAML
             if "step5" in data:
                 for key in ("text_color", "outline_color"):
                     if key in data["step5"] and isinstance(data["step5"][key], str) and str(data["step5"][key]).strip().upper().startswith("&H"):
@@ -701,10 +660,8 @@ class ProGUI(ctk.CTk):
             self.cfg = ConfigLoader.load() 
             
             engine = ProEngine()
-            # Ép engine dùng đúng config vừa save từ UI
             engine.cfg = self.cfg 
             
-            # Reset các step để chúng nhận config mới (nếu engine đã cache step)
             engine._s2 = None
             engine._s3 = None
             
@@ -716,17 +673,14 @@ class ProGUI(ctk.CTk):
             logger.exception("Pipeline Error")
             self.lbl_status.configure(text="ERROR", text_color="#e74c3c")
             msg = str(e)
-            if is_shm_dll_error(e):
-                msg = msg + "\n\n" + SHM_FIX_MESSAGE
-            elif is_meth_static_error(e):
-                msg = msg + "\n\n" + METH_FIX_MESSAGE
+            if is_shm_dll_error(e): msg = msg + "\n\n" + SHM_FIX_MESSAGE
+            elif is_meth_static_error(e): msg = msg + "\n\n" + METH_FIX_MESSAGE
             messagebox.showerror("Lỗi", msg)
         finally:
             self.is_running_pipeline = False
             self.btn_run.configure(state="normal", text="▶ BẮT ĐẦU XỬ LÝ", fg_color="#27ae60")
             self._update_progress_ui(0, 0, [])
 
-    # [FIX] Thêm biến cờ riêng cho luồng pipeline để tránh xung đột với is_running của UI
     is_running_pipeline = False 
 
 if __name__ == "__main__":

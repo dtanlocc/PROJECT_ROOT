@@ -68,3 +68,4 @@ step6:
   tts_volume: 1.4
   min_words_for_tts: 0
   speedup_when_short: 1.5
+  original_voice_volume: 0.2

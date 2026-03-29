@@ -11,6 +11,9 @@ from loguru import logger
 from app.core.config_loader import ConfigLoader
 from app.services.ffmpeg_manager import FFmpegManager
 
+# --- [BỔ SUNG BẢO MẬT]: Kích hoạt Giai đoạn 4 ---
+from app.core.security import is_session_valid
+
 # --- Lỗi shm.dll (PyTorch GPU trên Windows) ---
 def is_shm_dll_error(ex):
     """True nếu là lỗi WinError 127 / shm.dll khi load PyTorch."""
@@ -31,14 +34,12 @@ SHM_FIX_MESSAGE = (
     "   https://aka.ms/vs/17/release/vc_redist.x64.exe"
 )
 
-
 def is_meth_static_error(ex):
     """True nếu là lỗi METH_CLASS / METH_STATIC (Python vs PyTorch/NumPy không tương thích)."""
     if ex is None:
         return False
     msg = str(ex).lower()
     return "meth_class" in msg or "meth_static" in msg
-
 
 METH_FIX_MESSAGE = (
     "Lỗi tương thích Python / PyTorch / NumPy (METH_CLASS hoặc METH_STATIC).\n\n"
@@ -50,10 +51,8 @@ METH_FIX_MESSAGE = (
     "   Sau đó chạy lại pipeline."
 )
 
-
 # Chỉ import step nhẹ (B1) lúc khởi tạo; B2–B6 import khi chạy (tránh torch/paddle/whisper load cùng GUI → lỗi METH_STATIC, already registered)
 from app.steps.s1_normalize import Step1Normalize
-
 
 class ProEngine:
     def __init__(self):
@@ -87,7 +86,7 @@ class ProEngine:
 
     def _report_step_ratio(self, step_name: str, safe_stem: str, ratio: float):
         """
-        Gửi tiến độ chi tiết của một bước (vd. B3 Transcribe) ra GUI mà không làm tăng completed.
+        Gửi tiến độ chi tiết của một bước ra GUI mà không làm tăng completed.
         ratio: 0.0–1.0 cho video hiện tại.
         """
         if self._on_progress_cb is None or self._progress_total <= 0:
@@ -96,12 +95,9 @@ class ProEngine:
             ratio_val = float(ratio)
         except Exception:
             return
-        if ratio_val < 0.0:
-            ratio_val = 0.0
-        if ratio_val > 1.0:
-            ratio_val = 1.0
+        if ratio_val < 0.0: ratio_val = 0.0
+        if ratio_val > 1.0: ratio_val = 1.0
         with self._progress_lock:
-            # Không cộng vào _progress_completed, chỉ điều chỉnh view cho video hiện tại
             self._progress_current[safe_stem] = f"{step_name} {int(ratio_val * 100)}%"
             cur = list(self._progress_current.values())
             effective_completed = self._progress_completed + ratio_val
@@ -140,35 +136,39 @@ class ProEngine:
     def _get_safe_name(self, original_name):
         """Tạo tên file ngắn gọn an toàn từ tên gốc"""
         ext = Path(original_name).suffix
-        # Hash tên file để đảm bảo ngắn và duy nhất
         safe_hash = hashlib.md5(original_name.encode('utf-8')).hexdigest()[:10]
         return f"vid_{safe_hash}{ext}"
 
     def process_one(self, video_path: Path):
+        # [CHỐT BẢO MẬT 2]: Kiểm tra Token mỗi khi bắt đầu xử lý 1 video mới
+        # Dùng lock để tránh xung đột làm hỏng Rolling Key khi chạy đa luồng
+        with self._progress_lock:
+            if not is_session_valid():
+                logger.error("Phát hiện môi trường không an toàn. Đang đóng băng hệ thống!")
+                os._exit(0) # Tắt nguồn toàn bộ tiến trình ngay lập tức
+
         original_stem = video_path.stem
         safe_filename = self._get_safe_name(video_path.name)
         
-        # Tạo thư mục tạm để xử lý (workspace/processing)
         work_dir = self.cfg.pipeline.workspace_root / "processing"
         work_dir.mkdir(parents=True, exist_ok=True)
-        
-        # File làm việc an toàn (tên ngắn)
         safe_video_path = work_dir / safe_filename
-        
         safe_stem = safe_video_path.stem
+        
         try:
             logger.info(f"🚀 Processing: {original_stem} (SafeID: {safe_filename})")
             
-            # BƯỚC 0: Copy file gốc vào môi trường làm việc an toàn
             if not safe_video_path.exists():
                 shutil.copy2(str(video_path), str(safe_video_path))
 
-            # --- PIPELINE CHẠY TRÊN FILE TÊN NGẮN ---
+            # --- PIPELINE ---
             self._report_progress("B1 Normalize", safe_stem)
             wav = self.s1.process(safe_video_path)
             
             self._report_progress("B2 Demucs", safe_stem)
             with self.gpu_lock:
+                # [CHỐT BẢO MẬT 3]: Kiểm tra ngay trước khi load model AI nặng
+                if not is_session_valid(): os._exit(0)
                 sep_dir = self._get_s2().process(wav)
             vocals = sep_dir / "vocals.wav"
             bg_music = sep_dir / "no_vocals.wav"
@@ -177,10 +177,8 @@ class ProEngine:
             input_s3 = safe_video_path if self.cfg.step3.srt_source == "image" else sep_dir
 
             def _b3_progress(ratio: float):
-                try:
-                    self._report_step_ratio("B3 Transcribe", safe_stem, ratio)
-                except Exception:
-                    pass
+                try: self._report_step_ratio("B3 Transcribe", safe_stem, ratio)
+                except Exception: pass
 
             with self.gpu_lock:
                 srt_raw = self._get_s3().process(input_s3, on_progress=_b3_progress)
@@ -194,9 +192,7 @@ class ProEngine:
             self._report_progress("B6 Mix", safe_stem)
             final_temp = self._get_s6().process(vid_sub, srt_trans, bg_music)
             
-            # --- KẾT THÚC & TRẢ KẾT QUẢ ---
-            
-            # Move kết quả ra Output và đổi lại tên gốc
+            # --- KẾT THÚC ---
             self.cfg.pipeline.step6_final.mkdir(parents=True, exist_ok=True)
             final_output = self.cfg.pipeline.step6_final / f"{original_stem}.mp4"
             
@@ -206,20 +202,15 @@ class ProEngine:
             else:
                 raise RuntimeError("B6 không tạo ra file output")
 
-            # Move file gốc vào Done
             self.cfg.pipeline.done.mkdir(parents=True, exist_ok=True)
             shutil.move(str(video_path), str(self.cfg.pipeline.done / video_path.name))
 
-            # Dọn dẹp file tạm / trung gian để tiết kiệm ổ đĩa
             self._cleanup_intermediates(safe_video_path.stem, wav, sep_dir, srt_raw, srt_trans, vid_sub)
 
         except Exception as e:
             logger.error(f"❌ FAILED {original_stem}: {e}")
-            if is_shm_dll_error(e):
-                logger.error(SHM_FIX_MESSAGE)
-            elif is_meth_static_error(e):
-                logger.error(METH_FIX_MESSAGE)
-            # Move file gốc vào Failed
+            if is_shm_dll_error(e): logger.error(SHM_FIX_MESSAGE)
+            elif is_meth_static_error(e): logger.error(METH_FIX_MESSAGE)
             self.cfg.pipeline.failed.mkdir(parents=True, exist_ok=True)
             try:
                 if video_path.exists():
@@ -229,50 +220,38 @@ class ProEngine:
         finally:
             self._report_progress(done=True, safe_stem=safe_stem)
             try:
-                if safe_video_path.exists():
-                    os.remove(safe_video_path)
-            except Exception:
-                pass
+                if safe_video_path.exists(): os.remove(safe_video_path)
+            except Exception: pass
 
     def _cleanup_intermediates(self, safe_stem, wav_path, sep_dir, srt_raw, srt_trans, vid_sub):
-        """Xóa file/ thư mục trung gian sau khi xử lý xong một video để tối ưu dung lượng."""
         try:
-            if wav_path and Path(wav_path).exists():
-                Path(wav_path).unlink(missing_ok=True)
-        except Exception:
-            pass
+            if wav_path and Path(wav_path).exists(): Path(wav_path).unlink(missing_ok=True)
+        except: pass
         try:
-            if sep_dir and Path(sep_dir).is_dir():
-                shutil.rmtree(sep_dir, ignore_errors=True)
-        except Exception:
-            pass
+            if sep_dir and Path(sep_dir).is_dir(): shutil.rmtree(sep_dir, ignore_errors=True)
+        except: pass
         try:
-            if srt_raw and Path(srt_raw).exists():
-                Path(srt_raw).unlink(missing_ok=True)
-        except Exception:
-            pass
+            if srt_raw and Path(srt_raw).exists(): Path(srt_raw).unlink(missing_ok=True)
+        except: pass
         try:
-            if srt_trans and Path(srt_trans).exists():
-                Path(srt_trans).unlink(missing_ok=True)
-        except Exception:
-            pass
+            if srt_trans and Path(srt_trans).exists(): Path(srt_trans).unlink(missing_ok=True)
+        except: pass
         try:
-            if vid_sub and Path(vid_sub).exists():
-                Path(vid_sub).unlink(missing_ok=True)
-        except Exception:
-            pass
-        # raw_*.mp4 trong step5 (nếu còn sót do lỗi giữa chừng)
+            if vid_sub and Path(vid_sub).exists(): Path(vid_sub).unlink(missing_ok=True)
+        except: pass
         try:
             step5_dir = self.cfg.pipeline.step5_video_subbed
             raw_file = step5_dir / f"raw_{safe_stem}.mp4"
-            if raw_file.exists():
-                raw_file.unlink()
-        except Exception:
-            pass
+            if raw_file.exists(): raw_file.unlink()
+        except: pass
         gc.collect()
 
     def run(self, on_progress=None):
-        """on_progress(completed, total, current_list) với current_list = ['B2 Demucs', 'B4 Translate', ...]"""
+        # [CHỐT BẢO MẬT 1]: Kiểm tra ngay khi khách hàng ấn nút Bắt Đầu
+        if not is_session_valid():
+            logger.error("Truy cập bị từ chối!")
+            os._exit(0)
+
         input_dir = self.cfg.pipeline.input_videos
         videos = list(input_dir.glob("*.mp4"))
         
@@ -293,7 +272,6 @@ class ProEngine:
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
                 ex.map(self.process_one, videos)
         finally:
-            # Dọn thư mục processing/ sau khi chạy xong
             work_dir = self.cfg.pipeline.workspace_root / "processing"
             if work_dir.is_dir():
                 try:

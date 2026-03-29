@@ -189,64 +189,81 @@ class Step5Overlay(BaseStep):
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
 
+        # [TỐI ƯU 1] Ép kích thước chẵn để chống vỡ Pipe NVENC
+        w_even = w - (w % 2)
+        h_even = h - (h % 2)
+
         sub_y, sub_h, sub_w = self._detect_geometry(video_path)
+
+        # ==========================================================
+        # [TỐI ƯU 2] GIẢI PHÓNG GPU ĐỂ NHƯỜNG LUỒNG CHO FFMPEG
+        # ==========================================================
+        if hasattr(self, '_ocr') and self._ocr is not None:
+            del self._ocr
+            self._ocr = None
+        
+        import gc
+        gc.collect() 
+        try:
+            import paddle
+            paddle.device.cuda.empty_cache()
+            logger.info("🧹 Đã giải phóng GPU từ PaddleOCR để nhường luồng cho FFmpeg.")
+        except Exception:
+            pass
+        # ==========================================================
+
         if sub_y is None:
-            sub_h = int(h * 0.15)
-            sub_y = int(h * 0.8)
-            sub_w = int(w * 0.9)
+            sub_h = int(h * 0.15); sub_y = int(h * 0.8); sub_w = int(w * 0.9)
         bw, bh = sub_w, sub_h
-        bx = (w - bw) // 2
+        bx = (w_even - bw) // 2
         by = sub_y
 
         try:
             subs = pysrt.open(str(srt_path), encoding="utf-8")
         except Exception:
-            logger.warning("SRT error, skip overlay text.")
-            subs = []
+            logger.warning("SRT error, skip overlay text."); subs = []
 
         font_path = self._resolve_font()
         text_color = _color_to_rgb(getattr(self.cfg.step5, "text_color", [255, 255, 0, 255]))
         outline_color = _color_to_rgb(getattr(self.cfg.step5, "outline_color", [0, 0, 0, 255]))
 
         temp_raw = self.out_dir / f"raw_{video_path.stem}.mp4"
-        # Tối ưu cho shorts như che_sub-B5: p4 (tốc độ/chất lượng), cq 22, profile high
-        calculated_bitrate = "2M"
-        max_bitrate = "4M"
-        buf_size = "6M"
         force_cpu = os.environ.get("PIPELINE_FORCE_CPU") == "1"
+        
         encodings = []
         if not force_cpu:
-            encodings.append([
-                "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "22",
-                "-b:v", calculated_bitrate, "-maxrate", max_bitrate, "-bufsize", buf_size,
-                "-profile:v", "high", "-pix_fmt", "yuv420p",
-            ])
+            encodings.append(["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "22", "-pix_fmt", "yuv420p"])
         encodings.append(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "22", "-pix_fmt", "yuv420p"])
-        proc = None
+
+        encoded_ok = False
+
+        # [TỐI ƯU 3] Vòng lặp dự phòng an toàn tuyệt đối
         for enc in encodings:
+            if temp_raw.exists():
+                temp_raw.unlink(missing_ok=True)
+                
             cmd = [
                 self.ffmpeg_bin, "-y",
-                "-f", "rawvideo", "-vcodec", "rawvideo", "-s", f"{w}x{h}",
+                "-f", "rawvideo", "-vcodec", "rawvideo", "-s", f"{w_even}x{h_even}",
                 "-pix_fmt", "bgr24", "-r", str(fps), "-i", "-",
             ] + enc + [str(temp_raw)]
-            try:
-                proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                break
-            except Exception:
-                continue
-        if not proc:
-            cap.release()
-            raise RuntimeError("FFmpeg start failed")
-
-        frame_count = 0
-        try:
+            
+            # CHỐNG DEADLOCK: Không dùng PIPE cho stderr nữa
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            # Đưa video về khung hình số 0 trước mỗi lần thử nghiệm
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            frame_count = 0
+            pipe_broken = False
+            
             while True:
                 ret, frame = cap.read()
-                if not ret:
-                    break
+                if not ret: break
 
-                
-                sample_y = (h - bh) // 2
+                # Cắt viền thừa nếu video lẻ
+                frame = frame[:h_even, :w_even]
+
+                sample_y = (h_even - bh) // 2
                 roi_sample = frame[sample_y : sample_y + bh, bx : bx + bw].copy()
                 frame[by : by + bh, bx : bx + bw] = cv2.GaussianBlur(roi_sample, (51, 51), 0)
 
@@ -258,27 +275,44 @@ class Step5Overlay(BaseStep):
                     dynamic_font = self._get_optimal_font_size(text_to_draw, font_path, bw, bh)
                     bbox = draw.textbbox((0, 0), text_to_draw, font=dynamic_font)
                     lw, lh = bbox[2] - bbox[0], bbox[3] - bbox[1]
-                    lx = bx + (bw - lw) // 2
-                    ly = by + (bh - lh) // 2 - bbox[1]
-                    for ox, oy in [(-2, -2), (2, -2), (-2, 2), (2, 2), (0, -2), (0, 2), (-2, 0), (2, 0)]:
+                    lx, ly = bx + (bw - lw) // 2, by + (bh - lh) // 2 - bbox[1]
+                    for ox, oy in [(-2, -2), (2, -2), (-2, 2), (2, 2)]:
                         draw.text((lx + ox, ly + oy), text_to_draw, font=dynamic_font, fill=outline_color)
                     draw.text((lx, ly), text_to_draw, font=dynamic_font, fill=text_color)
                     frame = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
-                proc.stdin.write(frame.tobytes())
-                frame_count += 1
-        except Exception as e:
-            logger.error(f"Render loop error: {e}")
-        finally:
-            cap.release()
-            if proc:
-                proc.stdin.close()
-                proc.wait()
 
+                try:
+                    proc.stdin.write(frame.tobytes())
+                except (IOError, BrokenPipeError):
+                    logger.warning(f"⚠️ Encoder {enc[1]} bị vỡ Pipe. Tự động chuyển cấu hình...")
+                    pipe_broken = True
+                    break
+                frame_count += 1
+
+            proc.stdin.close()
+            proc.wait() # Bây giờ gọi wait() sẽ an toàn tuyệt đối, không bị treo
+            
+            # Kiểm tra xem có mã hóa thành công không
+            if not pipe_broken and proc.returncode == 0 and temp_raw.exists() and temp_raw.stat().st_size > 0:
+                logger.info(f"✅ Mã hóa video thành công bằng: {enc[1]}")
+                encoded_ok = True
+                break
+
+        cap.release()
+
+        if not encoded_ok:
+            raise RuntimeError("❌ Tất cả các bộ mã hóa FFmpeg đều thất bại (File 0KB).")
+
+        # Merge Audio
+        logger.info("🎬 Đang ghép Audio vào video...")
+        subprocess.run([
+            self.ffmpeg_bin, "-y", "-i", str(temp_raw), "-i", str(video_path),
+            "-map", "0:v", "-map", "1:a?", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            str(out_file)
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        
         if temp_raw.exists():
-            subprocess.run([
-                self.ffmpeg_bin, "-y", "-i", str(temp_raw), "-i", str(video_path),
-                "-map", "0:v", "-map", "1:a?", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                str(out_file)
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             temp_raw.unlink()
+            
         return out_file
+    

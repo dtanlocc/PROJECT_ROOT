@@ -18,9 +18,12 @@ LICENSE_FILE = "system.lic"
 _ENCRYPTED_RAM_TOKEN = None  # Token sẽ được mã hóa liên tục trong RAM
 _ROLLING_KEY_SEED = int(time.time() * 1000) % 999999 # Seed thay đổi mỗi lần chạy
 
+
+
 # Hàm giả lập SECRET (Sau này tool build sẽ thay thế bằng mã hóa XOR/AES)
 def SECRET(s): return s
-
+SUPABASE_URL = SECRET("https://gfihmymecoykcogqykbl.supabase.co")
+SUPABASE_ANON_KEY = SECRET("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmaWhteW1lY295a2NvZ3F5a2JsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5NjU4MTMsImV4cCI6MjA4NjU0MTgxM30.SWsdEyLWkOu2tKZS3ZFKk2riCR5uxubXbFvz0a12e_Q")
 # ------------------------------------------------------------------------------
 # 1. ANTI-DEBUGGING & ANTI-VM (CẢM BIẾN MÔI TRƯỜNG)
 # ------------------------------------------------------------------------------
@@ -164,33 +167,6 @@ def is_session_valid():
 # ------------------------------------------------------------------------------
 # 3. HWID & LICENSE LOGIC
 # ------------------------------------------------------------------------------
-def get_hwid():
-    """Lấy HWID duy nhất, kết hợp Mainboard + HDD + GPU (nếu có)"""
-    try:
-        # UUID Mainboard
-        cmd_uuid = "wmic csproduct get uuid"
-        uuid = subprocess.check_output(cmd_uuid, shell=True, stderr=subprocess.DEVNULL).decode().split('\n')[1].strip()
-        
-        # Serial HDD
-        cmd_hdd = "wmic diskdrive get serialnumber"
-        hdd = subprocess.check_output(cmd_hdd, shell=True, stderr=subprocess.DEVNULL).decode().split('\n')[1].strip()
-        
-        # Thử lấy GPU ID (Optional)
-        try:
-            cmd_gpu = "wmic path win32_VideoController get pnpdeviceid"
-            gpu = subprocess.check_output(cmd_gpu, shell=True, stderr=subprocess.DEVNULL).decode().split('\n')[1].strip()
-        except: gpu = "NO_GPU"
-
-        # Salt tĩnh để hacker không thể tự tính ra HWID dù biết thông số máy
-        raw = f"{uuid}::{gpu}::{hdd}::HARDCORE_SALT_V1"
-        return hashlib.sha256(raw.encode()).hexdigest()[:24].upper()
-    except:
-        return "UNKNOWN-HWID-ERR-001"
-
-def _generate_license_hash(key, hwid):
-    """Tạo chữ ký toàn vẹn cho file license"""
-    raw = f"||{key}||<<SECURE>>||{hwid}||"
-    return hashlib.sha512(raw.encode()).hexdigest()
 
 def check_local_license():
     """Kiểm tra license đã lưu trên máy"""
@@ -210,32 +186,44 @@ def check_local_license():
     except: pass
     return False, None
 
-def verify_key_with_server(user_key):
-    """
-    Xác thực Key (Online hoặc Offline giả lập).
-    URL API được bọc trong SECRET() để tool build tự động mã hóa.
-    """
-    if is_deep_hacker_environment():
-        return False, "Hệ thống phát hiện môi trường không an toàn (VM/Debug)."
-    
-    hwid = get_hwid()
-    
-    # --- LOGIC TEST (Khi chưa có Server thật) ---
-    # Key test: Bắt đầu bằng VIP-
-    if user_key.startswith("VIP-"):
-        # Giả lập server trả về OK
-        with open(LICENSE_FILE, 'w') as f:
-            json.dump({"key": user_key, "hash": _generate_license_hash(user_key, hwid)}, f)
-        _grant_session()
-        return True, "Kích hoạt thành công (Local Test)!"
-    # --------------------------------------------
+def get_hwid():
+    """HÀM HWID THỐNG NHẤT CHO TOÀN HỆ THỐNG"""
+    try:
+        cmd = "wmic csproduct get uuid"
+        uuid = subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL).decode().split('\n')[1].strip()
+        return hashlib.sha256(f"OVERLORD_{uuid}_SALT".encode()).hexdigest()[:24].upper()
+    except: return "UNKNOWN-HWID-FATAL"
 
-    # --- LOGIC CALL API THẬT (Production) ---
-    # api_url = SECRET("https://api.cuaban.com/verify-license")
-    # payload = json.dumps({"license_key": user_key, "hwid": hwid}).encode('utf-8')
-    # ... (Code gọi API như cũ) ...
-    
-    return False, "Key không hợp lệ."
+def _generate_license_hash(key, hwid):
+    return hashlib.sha512(f"||{key}||<<SECURE>>||{hwid}||".encode()).hexdigest()
+
+def verify_key_with_server(user_key):
+    """KIỂM TRA KEY QUA RPC - CHẶN ĐỨNG HWID SAI TỪ SERVER"""
+    hwid = get_hwid()
+    try:
+        # 1. Gọi RPC để lấy Lõi (Asset). Nếu HWID sai, hàm Postgres sẽ RAISE EXCEPTION trả về lỗi 400.
+        rpc_url = f"{SUPABASE_URL}/rest/v1/rpc/get_secure_payload"
+        req_data = json.dumps({'p_key': user_key, 'p_hwid': hwid, 'p_asset': 'core_blob'}).encode('utf-8')
+        headers = {'apikey': SUPABASE_ANON_KEY, 'Authorization': f'Bearer {SUPABASE_ANON_KEY}', 'Content-Type': 'application/json'}
+        
+        req = urllib.request.Request(rpc_url, data=req_data, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as response:
+            core_data = json.loads(response.read().decode('utf-8'))
+            
+            # 2. Nếu thành công, lưu file chứng chỉ để Launcher lần sau tự nạp
+            with open(LICENSE_FILE, 'w', encoding='utf-8') as f:
+                json.dump({"key": user_key, "hash": _generate_license_hash(user_key, hwid)}, f)
+            
+            return True, core_data # Trả về bytecode để GUI nạp vào RAM
+            
+    except urllib.error.HTTPError as e:
+        # Đọc lỗi từ RAISE EXCEPTION của Postgres
+        err_msg = e.read().decode('utf-8')
+        if "HWID mismatch" in err_msg: return False, "Key này đã bị khóa cho máy khác!"
+        if "Invalid" in err_msg: return False, "Key không tồn tại hoặc đã hết hạn!"
+        return False, f"Server từ chối: {err_msg}"
+    except Exception as e:
+        return False, f"Lỗi kết nối: {str(e)}"
 
 def run_security_check(gui_callback):
     """Entry point được gọi từ run_gui.py"""

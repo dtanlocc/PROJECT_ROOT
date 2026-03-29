@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-TITLE Pipeline Reup Pro - Cài đặt bản CHỈ CPU
+TITLE Pipeline Reup Pro - Cai dat ban CHI CPU
 
 echo cpu> install_mode.txt
 
@@ -15,7 +15,6 @@ echo.
 where python >nul 2>&1
 if errorlevel 1 (
     echo [LOI] Khong tim thay Python. Cai Python 3.10+ va tich "Add to PATH".
-    pause
     exit /b 1
 )
 
@@ -27,7 +26,6 @@ echo Tao venv...
 python -m venv venv
 if errorlevel 1 (
     echo [LOI] Tao venv that bai.
-    pause
     exit /b 1
 )
 
@@ -38,7 +36,6 @@ echo [1/3] PyTorch CPU...
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 if errorlevel 1 (
     echo [LOI] PyTorch CPU that bai.
-    pause
     exit /b 1
 )
 
@@ -50,13 +47,11 @@ if errorlevel 1 (
 )
 if errorlevel 1 (
     echo [LOI] PaddlePaddle CPU that bai. Thu: pip install paddlepaddle
-    pause
     exit /b 1
 )
 python -c "import paddle; print('Paddle:', paddle.__version__)"
 if errorlevel 1 (
     echo [LOI] Paddle cai xong nhung import loi. Thu cai lai: pip install paddlepaddle==2.6.1
-    pause
     exit /b 1
 )
 
@@ -64,7 +59,6 @@ echo [3/3] Thu vien phu tro (requirements.txt)...
 pip install -r requirements.txt
 if errorlevel 1 (
     echo [LOI] Cai requirements that bai.
-    pause
     exit /b 1
 )
 
@@ -75,4 +69,6 @@ echo ===========================================================================
 python -c "import torch; print('PyTorch:', torch.__version__, '| CUDA:', torch.cuda.is_available())"
 python -c "import paddle; print('Paddle:', paddle.__version__)"
 python -c "from paddleocr import PaddleOCR; print('PaddleOCR: OK')"
-pause
+
+:: --- CHOT HA DE THOAT KHOI TIEN TRINH NGAM ---
+exit /b 0

@@ -69,6 +69,8 @@ class Step6Config(BaseModel):
     tts_volume: float = 1.4  # Âm lượng TTS khi mix (như text-to-voice TTS_VOLUME)
     min_words_for_tts: int = 0  # 0 = tắt; nếu > 0 và câu ít từ thì lặp text cho TTS rồi cắt lại
     speedup_when_short: float = 1.5  # Khi TTS ngắn hơn slot: speed up rồi pad (như text-to-voice)
+    
+    original_voice_volume: float = 0.2
 
 class PipelineConfig(BaseModel):
     workspace_root: Path = Path(".")

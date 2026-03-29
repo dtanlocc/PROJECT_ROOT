@@ -196,7 +196,11 @@ class Step6Mix(BaseStep):
         input_idx = 2
         if extra_voice.exists():
             inputs.extend(["-i", str(extra_voice)])
-            filter_chains.append(f"[{input_idx}:a]volume=0.2[extra]")
+            
+            # Đọc tham số từ config, nếu không có thì mặc định là 0.2
+            orig_vol = getattr(self.cfg.step6, "original_voice_volume", 0.2)
+            filter_chains.append(f"[{input_idx}:a]volume={orig_vol}[extra]") 
+            
             mix_inputs.append("[extra]")
             input_idx += 1
             

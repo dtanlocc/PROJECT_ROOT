@@ -16,7 +16,6 @@ echo.
 where python >nul 2>&1
 if errorlevel 1 (
     echo [LOI] Khong tim thay Python. Cai Python 3.10+ va tich "Add to PATH".
-    pause
     exit /b 1
 )
 
@@ -28,7 +27,6 @@ echo Tao venv...
 python -m venv venv
 if errorlevel 1 (
     echo [LOI] Tao venv that bai.
-    pause
     exit /b 1
 )
 
@@ -39,7 +37,6 @@ echo [1/3] PyTorch GPU (CUDA 12.1)...
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
 if errorlevel 1 (
     echo [LOI] PyTorch that bai. Thu setup_venv_cpu.bat.
-    pause
     exit /b 1
 )
 
@@ -47,14 +44,13 @@ echo [2/3] PaddlePaddle GPU (CUDA 11.8)...
 pip install --no-cache-dir paddlepaddle-gpu==2.6.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/ --trusted-host www.paddlepaddle.org.cn
 if errorlevel 1 (
     echo [CANH BAO] Paddle GPU that bai. Co the cai: pip install paddlepaddle==2.6.1
-    pause
+    REM Bo pause, chi canh bao roi cho chay tiep
 )
 
 echo [3/3] Thu vien phu tro (requirements.txt)...
 pip install -r requirements.txt
 if errorlevel 1 (
     echo [LOI] Cai requirements that bai.
-    pause
     exit /b 1
 )
 
@@ -63,4 +59,6 @@ echo ===========================================================================
 echo   CAI DAT GPU HOAN TAT - install_mode.txt = gpu
 echo ===============================================================================
 python -c "import torch; print('PyTorch:', torch.__version__, '| CUDA:', torch.cuda.is_available())"
-pause
+
+:: --- CHOT HA DE BAO CAO HOAN THANH CHO POWERSHELL ---
+exit /b 0
