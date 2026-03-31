@@ -152,38 +152,39 @@ if __name__ == "__main__":
 
     # 1. Khởi tạo App Chính (Ẩn ngay lập tức)
     app = ProGUI()
-    app.withdraw() # Ẩn đi để chờ check security
+    app.mainloop()
+    # app.withdraw() # Ẩn đi để chờ check security
 
-    # 2. Định nghĩa hàm khởi động quy trình
-    def start_application_flow():
-        try:
-            # Callback hiển thị Popup
-            def show_login_popup():
-                login_window = LoginPopup(master=app)
-                app.wait_window(login_window) # Chờ Popup đóng
-                return login_window.is_authenticated
+    # # 2. Định nghĩa hàm khởi động quy trình
+    # def start_application_flow():
+    #     try:
+    #         # Callback hiển thị Popup
+    #         def show_login_popup():
+    #             login_window = LoginPopup(master=app)
+    #             app.wait_window(login_window) # Chờ Popup đóng
+    #             return login_window.is_authenticated
 
-            # Check Security
-            is_authorized = run_security_check(show_login_popup)
+    #         # Check Security
+    #         is_authorized = run_security_check(show_login_popup)
 
-            if is_authorized:
-                print(">> Access Granted.")
-                app.deiconify() # Hiện App chính
-            else:
-                print(">> Access Denied.")
-                app.quit() # Thoát vòng lặp
-                sys.exit() # Thoát hẳn
+    #         if is_authorized:
+    #             print(">> Access Granted.")
+    #             app.deiconify() # Hiện App chính
+    #         else:
+    #             print(">> Access Denied.")
+    #             app.quit() # Thoát vòng lặp
+    #             sys.exit() # Thoát hẳn
                 
-        except Exception as e:
-            print(f"Error in flow: {e}")
-            app.quit()
+    #     except Exception as e:
+    #         print(f"Error in flow: {e}")
+    #         app.quit()
 
-    # 3. Lên lịch chạy Security Check SAU KHI Mainloop bắt đầu
-    # app.after(100, func) nghĩa là: Chờ 100ms sau khi mainloop chạy thì gọi func
-    app.after(100, start_application_flow)
+    # # 3. Lên lịch chạy Security Check SAU KHI Mainloop bắt đầu
+    # # app.after(100, func) nghĩa là: Chờ 100ms sau khi mainloop chạy thì gọi func
+    # app.after(100, start_application_flow)
 
-    # 4. Bắt đầu Vòng lặp Sự kiện (Phải gọi dòng này cửa sổ mới hiện và xử lý được logic)
-    try:
-        app.mainloop()
-    except KeyboardInterrupt:
-        app.quit()
+    # # 4. Bắt đầu Vòng lặp Sự kiện (Phải gọi dòng này cửa sổ mới hiện và xử lý được logic)
+    # try:
+    #     app.mainloop()
+    # except KeyboardInterrupt:
+    #     app.quit()

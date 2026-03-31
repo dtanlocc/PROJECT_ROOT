@@ -53,11 +53,13 @@ step4:
 
 step5:
   ocr_lang: ch
-  roi_y_start: 0.5
-  roi_y_end: 0.9
-  font_path: ""
+  roi_y_start: 0.0
+  roi_y_end: 1.0
+  font_path: ''
   font_size: 45
   max_words_per_line: 10
+  font_scale_h_percent: 0.025
+  line_spacing_scale_h_percent: 0.005
   text_color: [255, 255, 0, 255]
   outline_color: [0, 0, 0, 255]
 

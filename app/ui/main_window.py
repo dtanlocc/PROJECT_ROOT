@@ -10,7 +10,7 @@ from tkinter import filedialog, messagebox, colorchooser
 
 from app import __version__
 from app.core.config_loader import ConfigLoader
-from app.core.engine import ProEngine, is_shm_dll_error, SHM_FIX_MESSAGE, is_meth_static_error, METH_FIX_MESSAGE
+from app.core.engine import ProEngine
 
 # 1. Hàm tìm đường dẫn tài nguyên
 def resource_path(relative_path):
@@ -233,15 +233,15 @@ class ProGUI(ctk.CTk):
             self.hw_info = "MODE: CPU ONLY"
             self.hw_color = "#f1c40f"
 
-    def _hw_error(self, e):
-        logger.debug(f"PyTorch check failed: {type(e).__name__}: {e}")
-        if is_shm_dll_error(e):
-            self.hw_info = "PyTorch GPU lỗi (shm.dll)\n→ Chạy setup_venv_cpu.bat"
-            self.hw_color = "#e67e22"
-        else:
-            short = str(e).split("\n")[0].strip()[:50]
-            self.hw_info = f"PyTorch lỗi: {short}..." if len(str(e)) > 50 else f"PyTorch lỗi: {short}"
-            self.hw_color = "#e74c3c"
+    # def _hw_error(self, e):
+    #     logger.debug(f"PyTorch check failed: {type(e).__name__}: {e}")
+    #     if is_shm_dll_error(e):
+    #         self.hw_info = "PyTorch GPU lỗi (shm.dll)\n→ Chạy setup_venv_cpu.bat"
+    #         self.hw_color = "#e67e22"
+    #     else:
+    #         short = str(e).split("\n")[0].strip()[:50]
+    #         self.hw_info = f"PyTorch lỗi: {short}..." if len(str(e)) > 50 else f"PyTorch lỗi: {short}"
+    #         self.hw_color = "#e74c3c"
 
     def _init_layout(self):
         self.grid_columnconfigure(1, weight=1)
@@ -673,9 +673,9 @@ class ProGUI(ctk.CTk):
             logger.exception("Pipeline Error")
             self.lbl_status.configure(text="ERROR", text_color="#e74c3c")
             msg = str(e)
-            if is_shm_dll_error(e): msg = msg + "\n\n" + SHM_FIX_MESSAGE
-            elif is_meth_static_error(e): msg = msg + "\n\n" + METH_FIX_MESSAGE
-            messagebox.showerror("Lỗi", msg)
+            # if is_shm_dll_error(e): msg = msg + "\n\n" + SHM_FIX_MESSAGE
+            # elif is_meth_static_error(e): msg = msg + "\n\n" + METH_FIX_MESSAGE
+            # messagebox.showerror("Lỗi", msg)
         finally:
             self.is_running_pipeline = False
             self.btn_run.configure(state="normal", text="▶ BẮT ĐẦU XỬ LÝ", fg_color="#27ae60")

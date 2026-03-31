@@ -1,6 +1,6 @@
 pipeline:
   workspace_root: .
-  input_videos: D:\TOOL\inputs\1
+  input_videos: C:\test
   step1_wav: workspace\01_wav
   step2_separated: workspace\02_separated
   step3_srt_raw: workspace\03_srt_raw
@@ -10,27 +10,27 @@ pipeline:
   step6_voices_cache: workspace\06_voices
   done: done
   failed: failed
-ffmpeg_bin: C:/Users/Admin/Downloads/ffmpeg-8.0-full_build/ffmpeg-8.0-full_build/bin/ffmpeg.exe
+ffmpeg_bin: C:/ffmpeg/ffmpeg.exe
 step1:
   sample_rate: 16000
   channels: 1
 step2:
   model: htdemucs
-  device: auto
+  device: cuda
   jobs: 1
   two_stems: true
   shifts: 2
   output_float32: false
 step3:
-  srt_source: voice
+  srt_source: image
   model_size: large-v2
-  device: cpu
+  device: cuda
   language: zh
   cpu_threads: 1
   image_frame_interval: 0.5
   image_step_frames: 10
   image_ocr_lang: ch
-  image_use_gpu: false
+  image_use_gpu: true
   similarity_threshold: 0.7
   image_min_duration_ms: 250
   image_confidence_threshold: 0.5

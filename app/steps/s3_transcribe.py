@@ -1,245 +1,332 @@
+# file: app/steps/s3_transcribe.py
 import os
 import re
 import gc
-import logging
+import cv2
+import av
+import torch
+import numpy as np
+import subprocess
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, Callable, List
 from loguru import logger
+from difflib import SequenceMatcher
+from collections import defaultdict, Counter
+from faster_whisper import WhisperModel
 from app.steps.base import BaseStep
-import time
-
-# Tắt check mạng Paddle
-os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
-
-def _clean_whisper_text(raw: str) -> str:
-    """Dọn dẹp text: cắt khoảng trắng và các ký tự không phải chữ/CJK ở đầu/cuối."""
-    clean = (raw or "").strip()
-    clean = re.sub(r"^[^\w\u4e00-\u9fff]+", "", clean)
-    clean = re.sub(r"[^\w\u4e00-\u9fff]+$", "", clean)
-    return clean
 
 class Step3Transcribe(BaseStep):
-    def __init__(self, cfg):  
+    def __init__(self, cfg):
         super().__init__(cfg)
-        self.out_dir = self.cfg.pipeline.step3_srt_raw
+        # Tự động map đường dẫn output
+        self.out_dir = Path(getattr(self.cfg.pipeline, 'step3_srt_raw', 'workspace/03_srt_raw'))
         self._whisper = None
         self._ocr = None
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    def process(self, input_source: Path, on_progress: Optional[Callable[[float], None]] = None) -> Path:
-        self.ensure_dir(self.out_dir)
-        mode = self.cfg.step3.srt_source
-        
-        # Xác định file nguồn dựa trên mode (voice hoặc image)
-        if mode == "voice":
-            video_stem = input_source.name
-            src_file = input_source / "vocals.wav"
-            out_srt = self.out_dir / f"{video_stem}.srt"
-        else:
-            video_stem = input_source.stem
-            src_file = input_source
-            out_srt = self.out_dir / f"{video_stem}.srt"
+    # ============================================================
+    # HÀM HỖ TRỢ (HELPERS)
+    # ============================================================
+    def _get_similarity(self, s1: str, s2: str) -> float:
+        """So sánh độ tương đồng giữa 2 chuỗi text."""
+        if not s1 or not s2: 
+            return 0.0 if s1 != s2 else 1.0
+        return SequenceMatcher(None, s1, s2).ratio()
 
-        # Resume Check: Nếu file đã tồn tại thì bỏ qua
-        if out_srt.exists() and out_srt.stat().st_size > 0:
-            return out_srt
+    def _format_time(self, ms: float) -> str:
+        """Convert miliseconds sang chuẩn SRT HH:MM:SS,mmm"""
+        seconds, milliseconds = divmod(int(ms), 1000)
+        minutes, seconds = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
 
-        logger.info(f"📝 [Step 3] Transcribe ({mode}): {video_stem}")
+    def _is_valid_chinese_sub(self, text):
+        if not text: return False
+        return bool(re.search(r'[\u4e00-\u9fff]', str(text)))
 
-        if mode == "voice":
-            self._run_whisper(src_file, out_srt, on_progress=on_progress)
-        else:
-            self._run_ocr(src_file, out_srt)
-        
-        return out_srt
+    def _final_polish_text(self, text):
+        if not text: return ""
+        t = str(text)
+        t = re.sub(r'\s+[^\s]{1}$', '', t) # Xóa ký tự lẻ cuối
+        t = re.sub(r'^[^\s]{1}\s+', '', t) # Xóa ký tự lẻ đầu
+        if not re.search(r'[\u4e00-\u9fff]', t): return ""
+        return t.strip()
 
-    def _add_subtitle(self, subtitles, words):
-        """Hàm hỗ trợ đóng gói subtitle từ danh sách từ (words)."""
-        if not words:
-            return
-        start_t = float(words[0].start)
-        end_t = float(words[-1].end)
-        raw_text = "".join([w.word for w in words]).strip()
-        clean_text = _clean_whisper_text(raw_text)
-        if clean_text:
-            subtitles.append((start_t, end_t, clean_text))
-
-    def _run_whisper(self, audio_path, out_path, on_progress: Optional[Callable[[float], None]] = None):
-        """Logic nhận diện giọng nói: Sử dụng Word-level kết hợp ngắt câu thông minh."""
-        import torch
-        from faster_whisper import WhisperModel
-
-        if not self._whisper:
-            device = self.cfg.step3.device
-            if device == "auto":
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-            compute = "float16" if device == "cuda" else "float32"
-            
-            try:
-                self._whisper = WhisperModel(
-                    self.cfg.step3.model_size,
-                    device=device,
-                    compute_type=compute,
-                    cpu_threads=getattr(self.cfg.step3, "cpu_threads", 1),
-                )
-            except Exception as e:
-                logger.warning(f"Lỗi khởi tạo GPU, chuyển sang CPU: {e}")
-                self._whisper = WhisperModel(
-                    self.cfg.step3.model_size,
-                    device="cpu",
-                    compute_type="float32"
-                )
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        gc.collect()
-
-        lang = self.cfg.step3.language
-        subtitles = []
-        current_words = []
-        
-        # Cấu hình Prompt để ép Whisper tạo dấu câu (Punctuation)
-        # Nếu không có prompt này, Whisper thường trả về text trơn không dấu.
-        initial_prompt = "Chào bạn. Hôm nay bạn thế nào? Tôi là trợ lý AI. Tôi sẽ giúp bạn dịch thuật và làm phụ đề chính xác."
-        if lang == "zh":
-            initial_prompt = "你好，这是一个准确的字幕翻译。我们会加上标点符号，如句号、问号和感叹号。"
-
-        max_chars = 25 if lang in ["zh", "ja", "ko"] else 80
-
-        video_id = Path(audio_path).stem[:10]
-
+    # ============================================================
+    # WHISPER LOGIC (VOICE TO SRT)
+    # ============================================================
+    def _av_get_duration(self, file_path: str) -> float:
         try:
-            with open(str(audio_path), "rb") as f:
-                segments_iter, info = self._whisper.transcribe(
-                    f,
-                    word_timestamps=True,
-                    vad_filter=True,
-                    language=lang,
-                    initial_prompt=initial_prompt, # QUAN TRỌNG: Ép tạo dấu câu
-                    beam_size=1,  # Thêm dòng này để tăng tốc tối đa
-                    best_of=1  # Thêm dòng này để tăng tốc tối đa
-                )
-                
-                duration = float(getattr(info, "duration", 0.0) or 0.0)
-                logger.info(f"{video_id} | STEP 3 | 🚀 Whisper: Bắt đầu (Audio: {duration:.1f}s)")
-                
-                for i, seg in enumerate(segments_iter):
-                    if i % 3 == 0: # Cập nhật thường xuyên hơn
-                        pct = int((seg.end / duration) * 100)
-                        bar = "█" * (pct // 5) + "░" * (20 - (pct // 5))
-                        # Định dạng chuẩn: [STREAM] | ID | NỘI DUNG
-                        logger.info(f"[STREAM] | {video_id} | STEP 3 | |{bar}| {pct}% ({seg.end:.1f}s)")
-                        
-                    for w in seg.words:
-                        current_words.append(w)
-                        # Loại bỏ khoảng trắng để đếm ký tự chuẩn cho CJK
-                        text_so_far = "".join([x.word for x in current_words]).replace(" ", "").strip()
-                        
-                        # LOGIC NGẮT CÂU MẠNH (Strong Splitting)
-                        # 1. Kiểm tra dấu câu ở cuối từ hiện tại
-                        last_word_clean = w.word.strip()
-                        has_punc = re.search(r'[.!?;。！？；,，]$', last_word_clean)
-                        
-                        # 2. Ngắt theo độ dài ký tự
-                        too_long = len(text_so_far) >= max_chars
-                        
-                        # 3. Ngắt nếu có khoảng lặng lớn giữa 2 từ (Gap > 0.5s)
-                        has_gap = False
-                        if len(current_words) > 1:
-                            gap = w.start - current_words[-2].end
-                            if gap > 0.5:
-                                has_gap = True
+            with av.open(file_path) as container:
+                return container.duration / 1e6 if container.duration else 0.0
+        except: return 0.0
 
-                        if has_punc or too_long or has_gap:
-                            self._add_subtitle(subtitles, current_words)
-                            current_words = []
-                    
-                    # 2. Cập nhật tiến độ liên tục ra GUI
-                    if on_progress and duration > 0:
-                        on_progress(min(seg.end / duration, 1.0))
-                
-                logger.success("✅ Hoàn thành Step 3: Transcribe.")
+    def _run_whisper_v3(self, audio_file: Path, out_path: Path, on_progress):
+        from faster_whisper import WhisperModel
+        if not self._whisper:
+            self._whisper = WhisperModel(
+                self.cfg.step3.model_size,
+                device=self.device,
+                compute_type="float16" if self.device == "cuda" else "float32"
+            )
 
-                if current_words:
-                    self._add_subtitle(subtitles, current_words)
-
+        duration = self._av_get_duration(str(audio_file))
+        subtitles = []
+        
+        try:
+            segments, info = self._whisper.transcribe(
+                str(audio_file), vad_filter=True, language=self.cfg.step3.language
+            )
+            for seg in segments:
+                clean = re.sub(r'^[^\w\u4e00-\u9fff]+', '', seg.text.strip())
+                clean = re.sub(r'[^\w\u4e00-\u9fff]+$', '', clean)
+                if clean:
+                    subtitles.append({'start': seg.start * 1000, 'end': seg.end * 1000, 'text': clean})
+                if on_progress and duration > 0:
+                    on_progress(min(seg.end / duration, 1.0))
         except Exception as e:
-            logger.error(f"Whisper logic failed: {e}")
+            logger.error(f"Whisper Error: {e}")
 
-        # Ghi kết quả ra file SRT
         with open(out_path, "w", encoding="utf-8") as f:
-            for i, (start, end, text) in enumerate(subtitles, 1):
-                f.write(f"{i}\n{self._fmt(start)} --> {self._fmt(end)}\n{text}\n\n")
+            for idx, sub in enumerate(subtitles, start=1):
+                f.write(f"{idx}\n{self._format_time(sub['start'])} --> {self._format_time(sub['end'])}\n{sub['text']}\n\n")
+    def _merge_duplicate_subs(self,subs, max_gap_ms=1500):
+        if not subs: return []
+        merged = []
+        for current in subs:
+            if not merged:
+                merged.append(current)
+                continue
+                
+            last = merged[-1]
+            gap = current['start'] - last['end']
+            similarity = self._get_similarity(current['text'], last['text'])
+            dynamic_threshold = 0.55 if gap <= 100 else self.cfg.step3.similarity_threshold
+            is_substring = (current['text'] in last['text']) or (last['text'] in current['text'])
+            
+            if (similarity >= dynamic_threshold or is_substring) and gap <= max_gap_ms:
+                last['end'] = max(last['end'], current['end'])
+                if len(current['text']) >= len(last['text']):
+                    last['text'] = current['text']
+            else:
+                merged.append(current)
+                
+        return merged
+    # ============================================================
+    # OCR LOGIC (IMAGE TO SRT)
+    # ============================================================
+    def _detect_sub_geometry(self, video_path):
+        """Đã tắt chế độ dò tự động. Chốt cứng tọa độ cắt theo cấu hình ROI."""
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened(): 
+            return None, None, None
 
-    # --- Các hàm bổ trợ OCR giữ nguyên theo logic hiện tại của bạn ---
-    def _run_ocr(self, video_path, out_path):
-        """Logic trích xuất sub từ ảnh (PaddleOCR)."""
-        if not self._ocr:
-            from paddleocr import PaddleOCR
-            self._ocr = PaddleOCR(lang=self.cfg.step3.image_ocr_lang, use_gpu=self.cfg.step3.image_use_gpu, show_log=False)
-        
-        import cv2
-        cap = cv2.VideoCapture(str(video_path))
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        
-        step_frames = getattr(self.cfg.step3, "image_step_frames", 10)
-        y1, y2 = int(h * self.cfg.step5.roi_y_start), int(h * self.cfg.step5.roi_y_end)
-
-        subs = []
-        last_text, last_fno = "", 0
-
-        for fno in range(0, total_frames, step_frames):
-            current_text = self._get_text_at_frame(cap, fno, y1, y2)
-            if self._get_similarity(current_text, last_text) < self.cfg.step3.similarity_threshold:
-                exact_fno = self._find_exact_change_frame(cap, max(0, fno - step_frames), fno, last_text, y1, y2)
-                if last_text:
-                    subs.append(((last_fno/fps)*1000, (exact_fno/fps)*1000, last_text))
-                last_text, last_fno = current_text, exact_fno
-
-        if last_text:
-            subs.append(((last_fno/fps)*1000, (total_frames/fps)*1000, last_text))
-        
+        h_video = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        w_video = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         cap.release()
-        with open(out_path, "w", encoding="utf-8") as f:
-            for i, (s, e, t) in enumerate(subs, 1):
-                f.write(f"{i}\n{self._fmt(s/1000)} --> {self._fmt(e/1000)}\n{t}\n\n")
 
-    def _preprocess_roi_all_colors(self, roi):
-        import cv2
-        import numpy as np
-        max_channel = np.max(roi, axis=2)
-        enhanced = cv2.convertScaleAbs(max_channel, alpha=1.5, beta=10)
-        _, thresh = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        return thresh
+        # Tính toán tọa độ dựa trực tiếp vào cấu hình ROI_Y_START_P (0.65) và ROI_Y_END_P (1.0)
+        final_by = int(h_video * self.cfg.step5.roi_y_start)
+        final_bh = int(h_video * self.cfg.step5.roi_y_end) - final_by
+        final_bw = w_video # Lấy tràn viền chiều ngang
 
-    def _get_text_at_frame(self, cap, fno, y1, y2):
-        import cv2
-        cap.set(cv2.CAP_PROP_POS_FRAMES, fno)
-        ret, frame = cap.read()
-        if not ret or frame[y1:y2, :].size == 0: return ""
-        processed = self._preprocess_roi_all_colors(frame[y1:y2, :])
-        res = self._ocr.ocr(processed, cls=False)
-        if res and res[0]:
-            return " ".join([line[1][0] for line in res[0] if line[1][1] >= self.cfg.step3.image_confidence_threshold]).strip()
+        print(f"✅ Bỏ qua quét tự động. Chốt cứng vùng Sub: Bắt đầu tại Y={final_by}, Cao={final_bh}px")
+        return final_by, final_bh, final_bw
+
+    def _get_text_at_frame_cv2(self, cap_search, fno, ocr, y1, y2):
+        cap_search.set(cv2.CAP_PROP_POS_FRAMES, fno)
+        ret, frame = cap_search.read()
+        if not ret or frame is None: return ""
+        
+        height = frame.shape[0]
+        
+        # --- LOGIC CO GIÃN TỰ ĐỘNG ---
+        # 1. Lề an toàn: 1.5% chiều cao video (tránh lẹm viền đen)
+        dynamic_margin = int(height * 0.015) 
+        # 2. Ngưỡng Zoom: Nếu chữ gốc cao dưới 5% video thì mới phóng to
+        zoom_threshold = int(height * 0.05)
+        
+        # 3. Cắt vùng chứa chữ với lề an toàn
+        safe_y1 = max(0, y1 - dynamic_margin)
+        safe_y2 = min(height, y2 + dynamic_margin)
+        roi = frame[safe_y1:safe_y2, :]
+        
+        h_roi, w_roi = roi.shape[:2]
+        text_h_original = y2 - y1 # Chiều cao thực tế của chữ không tính lề
+        
+        # 4. Phóng to thông minh (Chỉ zoom khi chữ nhỏ)
+        if 0 < text_h_original < zoom_threshold and w_roi > 0:
+            zoomed_roi = cv2.resize(roi, (w_roi * 2, h_roi * 2), interpolation=cv2.INTER_CUBIC)
+        else:
+            zoomed_roi = roi
+            
+        # 5. Đưa ảnh vào AI (Dùng ảnh màu gốc để PaddleOCR tự xử lý)
+        result = ocr.ocr(zoomed_roi, cls=False)
+        
+        if result and result[0]:
+            # Hạ ngưỡng confidence xuống 0.5 để bắt được font chữ khó
+            texts = [line[1][0] for line in result[0] if line[1][1] > 0.5 and self._is_valid_chinese_sub(line[1][0])]
+            return " ".join(texts).strip()
         return ""
 
-    def _get_similarity(self, s1, s2):
-        from difflib import SequenceMatcher
-        return SequenceMatcher(None, s1 or "", s2 or "").ratio()
-
-    def _find_exact_change_frame(self, cap, start_f, end_f, start_text, y1, y2):
+    def _find_exact_change_frame(self, cap_search, start_f, end_f, start_text, ocr, y1, y2):
         low, high, ans = int(start_f), int(end_f), int(end_f)
         while low <= high:
             mid = (low + high) // 2
-            if self._get_similarity(self._get_text_at_frame(cap, mid, y1, y2), start_text) >= self.cfg.step3.similarity_threshold:
+            if self._get_similarity(self._get_text_at_frame_cv2(cap_search, mid, ocr, y1, y2), start_text) >= self.cfg.step3.similarity_threshold:
                 low = mid + 1
-            else:
-                ans, high = mid, mid - 1
+            else: ans = mid; high = mid - 1
         return ans
 
-    def _fmt(self, seconds):
-        if seconds is None: seconds = 0
-        h, m = int(seconds // 3600), int((seconds % 3600) // 60)
-        s, ms = int(seconds % 60), int((seconds - int(seconds)) * 1000)
-        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+    def _run_ocr_v3(self, video_path: Path, out_path: Path, on_progress):
+        from paddleocr import PaddleOCR
+        if not self._ocr:
+            self._ocr = PaddleOCR(use_angle_cls=False, lang='ch', use_gpu=self.cfg.step3.image_use_gpu, show_log=False)
+        
+        sub_y, sub_h, sub_w = self._detect_sub_geometry(str(video_path))
+        
+        probe = subprocess.check_output(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,avg_frame_rate,nb_frames', '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)]).decode('utf-8').split()
+        width, height, fps = int(probe[0]), int(probe[1]), eval(probe[2])
+        total_frames = int(probe[3]) if probe[3] != 'N/A' else 0
+        
+        y1, y2 = (sub_y, sub_y + sub_h) if sub_y is not None else (int(height * self.cfg.step5.roi_y_start), int(height * self.cfg.step5.roi_y_end))
+        step = self.cfg.step3.image_step_frames
+
+        cmd = ['ffmpeg', '-hwaccel', 'cuda', '-i', str(video_path), '-vf', f"select='not(mod(n,{step}))'", '-vsync', '0', '-f', 'image2pipe', '-vcodec', 'rawvideo', '-pix_fmt', 'bgr24', '-']
+        pipe = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=10**8)
+        cap_search = cv2.VideoCapture(str(video_path))
+
+        extracted_subs, last_text, last_fno, cur_idx = [], "", 0, 0
+        try:
+            while True:
+                raw = pipe.stdout.read(width * height * 3)
+                if not raw: break
+                fno = cur_idx * step
+                frame = np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3))
+                dynamic_margin = int(height * 0.015) 
+                zoom_threshold = int(height * 0.05)
+                
+                safe_y1 = max(0, y1 - dynamic_margin)
+                safe_y2 = min(height, y2 + dynamic_margin)
+                roi = frame[safe_y1:safe_y2, :]
+                
+                h_roi, w_roi = roi.shape[:2]
+                text_h_original = y2 - y1
+                
+                # Phóng to nếu chữ nhỏ
+                if 0 < text_h_original < zoom_threshold and w_roi > 0:
+                    zoomed_roi = cv2.resize(roi, (w_roi * 2, h_roi * 2), interpolation=cv2.INTER_CUBIC)
+                else:
+                    zoomed_roi = roi
+                
+                result = self._ocr.ocr(zoomed_roi, cls=False)
+                
+                if result and result[0]:
+                    valid_texts = [line[1][0] for line in result[0] if line[1][1] > 0.7 and self._is_valid_chinese_sub(line[1][0])]
+                    current_text = " ".join(valid_texts).strip() if (len(valid_texts) <= 3 and sum(len(t) for t in valid_texts) <= 45) else ""
+                else:
+                    current_text = ""
+
+                # Kiểm tra sự thay đổi nội dung (Similarity)
+                if self._get_similarity(current_text, last_text) < self.cfg.step3.similarity_threshold:
+                    # Dùng Binary Search để tìm frame chuyển cảnh chính xác
+                    exact_fno = self._find_exact_change_frame(cap_search, max(0, fno - step), fno, last_text, self._ocr, y1, y2)
+                    
+                    if last_text:
+                        start_ms, end_ms = (last_fno / fps) * 1000, (exact_fno / fps) * 1000
+                        if (end_ms - start_ms) >= self.cfg.step3.image_min_duration_ms:
+                            extracted_subs.append({'start': start_ms, 'end': end_ms, 'text': last_text})
+                    
+                    last_text, last_fno = current_text, exact_fno
+                
+                cur_idx += 1
+                if on_progress and total_frames > 0: on_progress(fno / total_frames)
+
+        finally:
+            pipe.terminate()
+            cap_search.release()
+
+        # Ghi file kết quả
+        if last_text:
+            extracted_subs.append({'start': (last_fno/fps)*1000, 'end': (total_frames/fps)*1000, 'text': last_text})
+
+        extracted_subs = self._remove_dynamic_watermark(extracted_subs)
+        extracted_subs = self._merge_duplicate_subs(extracted_subs)
+
+        with open(out_path, "w", encoding="utf-8") as f:
+            sub_index = 1
+            for item in extracted_subs:
+                polished_text = self._final_polish_text(item['text'])
+                if polished_text:
+                    f.write(f"{sub_index}\n{self._format_time(item['start'])} --> {self._format_time(item['end'])}\n{polished_text}\n\n")
+                    sub_index += 1
+    def _remove_dynamic_watermark(self, raw_subs):
+        """Quét và xóa Watermark không cần dấu cách (chuẩn cho Tiếng Trung, Nhật, Hàn)"""
+        if not raw_subs or len(raw_subs) < 5: 
+            return raw_subs
+
+        texts = [sub['text'] for sub in raw_subs]
+        total_subs = len(texts)
+        
+        # 1. Quét tìm tất cả các chuỗi con có độ dài >= 3 ký tự
+        substring_counts = defaultdict(int)
+        for t in texts:
+            seen_substrings = set()
+            length = len(t)
+            for i in range(length):
+                for j in range(i + 3, length + 1): # Chỉ xét chuỗi dài từ 3 ký tự trở lên
+                    seen_substrings.add(t[i:j])
+            
+            for sub_str in seen_substrings:
+                substring_counts[sub_str] += 1
+                
+        # 2. Nếu một chuỗi xuất hiện ở hơn 35% tổng số câu -> Đích thị là Logo/Watermark
+        watermarks = [sub_str for sub_str, count in substring_counts.items() if count > (total_subs * 0.35)]
+        
+        if not watermarks:
+            return raw_subs
+            
+        # 3. Lọc chỉ lấy cụm từ dài nhất (tránh việc xóa lẻ tẻ)
+        watermarks.sort(key=len, reverse=True)
+        final_watermarks = []
+        for w in watermarks:
+            if not any(w in fw for fw in final_watermarks):
+                final_watermarks.append(w)
+                
+        print(f"\n🗑️ Đã tự động phát hiện và xóa Logo: {final_watermarks}")
+        
+        # 4. Cắt logo ra khỏi toàn bộ sub
+        cleaned_subs = []
+        for sub in raw_subs:
+            clean_text = sub['text']
+            for wm in final_watermarks:
+                clean_text = clean_text.replace(wm, "").strip()
+                # Bỏ thêm cụm 'bl' do OCR hay nhận diện nhầm viền logo
+                clean_text = clean_text.replace("bl", "").strip() 
+            
+            if clean_text:
+                sub['text'] = clean_text
+                cleaned_subs.append(sub)
+                
+        return cleaned_subs
+
+    def _merge_subs(self, subs):
+        if not subs: return []
+        merged = []
+        for curr in subs:
+            if not merged: merged.append(curr); continue
+            last = merged[-1]
+            if self._get_similarity(curr['text'], last['text']) >= self.cfg.step3.similarity_threshold and (curr['start'] - last['end'] <= 1500):
+                last['end'] = max(last['end'], curr['end'])
+            else: merged.append(curr)
+        return merged
+
+    def process(self, input_source: Path, on_progress=None) -> Path:
+        self.ensure_dir(self.out_dir)
+        mode = self.cfg.step3.srt_source
+        out_srt = self.out_dir / f"{input_source.stem}.srt"
+        if mode == "voice":
+            self._run_whisper_v3(input_source / "vocals.wav" if input_source.is_dir() else input_source, out_srt, on_progress)
+        else:
+            self._run_ocr_v3(input_source, out_srt, on_progress)
+        return out_srt

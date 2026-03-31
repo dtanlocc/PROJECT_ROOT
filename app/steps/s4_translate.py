@@ -1,3 +1,5 @@
+#file: app/steps/s4_translate.py
+
 """
 Step 4: Dịch SRT bằng Gemini API.
 Logic dich_srt.py: parse_srt_blocks, chunk theo max_lines_per_chunk, xoay key (gemini_api_keys),
@@ -108,13 +110,13 @@ class Step4Translate(BaseStep):
             key = keys[key_idx]
             genai.configure(api_key=key)
             model = genai.GenerativeModel(model_name)
-            prompt = f"""Translate the following {lang_hint} subtitle lines into {target_hint}.
-
+            prompt = f"""
+                You are an expert subtitle translator. Translate the following {lang_hint}  subtitle lines into natural, conversational {target_hint}. 
+                Focus on the true meaning rather than translating word-for-word. Keep it concise for video subtitles. Read the entire context to understand sentences that span across multiple lines, but strictly maintain the original line breaks.
                 Requirements:
-                1) Output MUST be a JSON array of strings, exactly {expected} items.
-                2) Do NOT merge/split/add/remove lines.
-                3) No extra text or formatting.
-
+                1) Output MUST be a raw JSON array of strings, containing EXACTLY {expected} items.
+                2) Do NOT merge, split, add, or remove lines. The structure must map 1:1 with the input.
+                3) Output ONLY the JSON array. Do NOT wrap the response in ```json ``` markdown tags. No explanations, no extra text.
                 Input lines:
                 {joined_lines}
             """

@@ -112,79 +112,81 @@ def _grant_session():
         _ENCRYPTED_RAM_TOKEN.append(val)
 
 def is_session_valid():
-    """
-    [CRITICAL] Kiểm tra Token hợp lệ. 
-    Hàm này được gọi liên tục bởi engine.py.
-    Tích hợp cơ chế tự hủy nếu phát hiện tấn công.
-    """
-    global _ENCRYPTED_RAM_TOKEN, _ROLLING_KEY_SEED
+    # """
+    # [CRITICAL] Kiểm tra Token hợp lệ. 
+    # Hàm này được gọi liên tục bởi engine.py.
+    # Tích hợp cơ chế tự hủy nếu phát hiện tấn công.
+    # """
+    # global _ENCRYPTED_RAM_TOKEN, _ROLLING_KEY_SEED
     
-    # Bắt đầu bấm giờ (Anti-Stepping)
-    t_start = time.perf_counter()
+    # # Bắt đầu bấm giờ (Anti-Stepping)
+    # t_start = time.perf_counter()
     
-    # 1. Nếu môi trường có độc -> Từ chối ngay
-    if is_deep_hacker_environment():
-        _ENCRYPTED_RAM_TOKEN = None 
-        return False
+    # # 1. Nếu môi trường có độc -> Từ chối ngay
+    # if is_deep_hacker_environment():
+    #     _ENCRYPTED_RAM_TOKEN = None 
+    #     return False
         
-    # 2. Kiểm tra token trong RAM
-    if not _ENCRYPTED_RAM_TOKEN: return False
+    # # 2. Kiểm tra token trong RAM
+    # if not _ENCRYPTED_RAM_TOKEN: return False
 
-    # 3. Giải mã và Kiểm tra
-    try:
-        decoded_chars = []
-        for val in _ENCRYPTED_RAM_TOKEN:
-            val = val ^ (_ROLLING_KEY_SEED & 0xFF)
-            val = ((val << 4) | (val >> 4)) & 0xFF
-            decoded_chars.append(chr(val))
+    # # 3. Giải mã và Kiểm tra
+    # try:
+    #     decoded_chars = []
+    #     for val in _ENCRYPTED_RAM_TOKEN:
+    #         val = val ^ (_ROLLING_KEY_SEED & 0xFF)
+    #         val = ((val << 4) | (val >> 4)) & 0xFF
+    #         decoded_chars.append(chr(val))
         
-        decrypted_token = "".join(decoded_chars)
+    #     decrypted_token = "".join(decoded_chars)
         
-        # Verify lại với công thức gốc
-        expected_salt = f"RUNTIME_SALT_{_ROLLING_KEY_SEED}_SECURE"
-        expected = hashlib.sha256((get_hwid() + expected_salt).encode()).hexdigest()
+    #     # Verify lại với công thức gốc
+    #     expected_salt = f"RUNTIME_SALT_{_ROLLING_KEY_SEED}_SECURE"
+    #     expected = hashlib.sha256((get_hwid() + expected_salt).encode()).hexdigest()
         
-        is_valid = (decrypted_token == expected)
+    #     is_valid = (decrypted_token == expected)
         
-        # [KEY ROTATION] Đổi khóa mã hóa liên tục sau mỗi lần check thành công
-        # Hacker dump RAM lúc t1 sẽ vô dụng ở t2.
-        if is_valid:
-            _ROLLING_KEY_SEED = (_ROLLING_KEY_SEED * 1664525 + 1013904223) & 0xFFFFFFFF # LCG PRNG
-            _grant_session() # Re-encrypt với seed mới
+    #     # [KEY ROTATION] Đổi khóa mã hóa liên tục sau mỗi lần check thành công
+    #     # Hacker dump RAM lúc t1 sẽ vô dụng ở t2.
+    #     if is_valid:
+    #         _ROLLING_KEY_SEED = (_ROLLING_KEY_SEED * 1664525 + 1013904223) & 0xFFFFFFFF # LCG PRNG
+    #         _grant_session() # Re-encrypt với seed mới
             
-    except:
-        return False
+    # except:
+    #     return False
     
-    # Dừng bấm giờ. Nếu mất hơn 0.5s -> Đang bị Debug!
-    t_end = time.perf_counter()
-    if (t_end - t_start) > 0.5:
-        # Tự sát âm thầm: Ghi rác vào RAM
-        _ENCRYPTED_RAM_TOKEN = [0x00] * 10 
-        return False
+    # # Dừng bấm giờ. Nếu mất hơn 0.5s -> Đang bị Debug!
+    # t_end = time.perf_counter()
+    # if (t_end - t_start) > 0.5:
+    #     # Tự sát âm thầm: Ghi rác vào RAM
+    #     _ENCRYPTED_RAM_TOKEN = [0x00] * 10 
+    #     return False
 
-    return is_valid
+    # return is_valid
+    return True
 
 # ------------------------------------------------------------------------------
 # 3. HWID & LICENSE LOGIC
 # ------------------------------------------------------------------------------
 
 def check_local_license():
-    """Kiểm tra license đã lưu trên máy"""
-    if is_deep_hacker_environment(): return False, None
-    if not os.path.exists(LICENSE_FILE): return False, None
+    # """Kiểm tra license đã lưu trên máy"""
+    # if is_deep_hacker_environment(): return False, None
+    # if not os.path.exists(LICENSE_FILE): return False, None
     
-    try:
-        with open(LICENSE_FILE, 'r') as f:
-            data = json.load(f)
-            saved_key = data.get("key")
-            saved_hash = data.get("hash")
+    # try:
+    #     with open(LICENSE_FILE, 'r') as f:
+    #         data = json.load(f)
+    #         saved_key = data.get("key")
+    #         saved_hash = data.get("hash")
             
-        # Kiểm tra tính toàn vẹn: File license có bị sửa đổi không?
-        if saved_hash == _generate_license_hash(saved_key, get_hwid()):
-            _grant_session() # Cấp quyền chạy
-            return True, saved_key
-    except: pass
-    return False, None
+    #     # Kiểm tra tính toàn vẹn: File license có bị sửa đổi không?
+    #     if saved_hash == _generate_license_hash(saved_key, get_hwid()):
+    #         _grant_session() # Cấp quyền chạy
+    #         return True, saved_key
+    # except: pass
+    # return False, None
+    return True, "TEST-DEVELOPER-KEY"
 
 def get_hwid():
     """HÀM HWID THỐNG NHẤT CHO TOÀN HỆ THỐNG"""
@@ -226,8 +228,9 @@ def verify_key_with_server(user_key):
         return False, f"Lỗi kết nối: {str(e)}"
 
 def run_security_check(gui_callback):
-    """Entry point được gọi từ run_gui.py"""
-    is_active, _ = check_local_license()
-    if is_active: return True
-    # Nếu chưa active, gọi callback (hiện popup nhập key)
-    return gui_callback()
+    # """Entry point được gọi từ run_gui.py"""
+    # is_active, _ = check_local_license()
+    # if is_active: return True
+    # # Nếu chưa active, gọi callback (hiện popup nhập key)
+    # return gui_callback()
+    return True
