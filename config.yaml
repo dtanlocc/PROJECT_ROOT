@@ -1,6 +1,6 @@
 pipeline:
   workspace_root: .
-  input_videos: C:\test\test
+  input_videos: C:\test
   step1_wav: workspace\01_wav
   step2_separated: workspace\02_separated
   step3_srt_raw: workspace\03_srt_raw
@@ -22,7 +22,7 @@ step2:
   shifts: 2
   output_float32: false
 step3:
-  srt_source: voice
+  srt_source: image
   model_size: large-v2
   device: cuda
   language: zh
@@ -42,13 +42,11 @@ step4:
   max_lines_per_chunk: 250
 step5:
   ocr_lang: ch
-  roi_y_start: 0.0
+  roi_y_start: 0.5009009009009009
   roi_y_end: 1.0
   font_path: ''
   font_size: 45
   max_words_per_line: 10
-  font_scale_h_percent: 0.025
-  line_spacing_scale_h_percent: 0.005
   text_color:
   - 255
   - 255

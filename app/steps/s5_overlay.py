@@ -10,8 +10,14 @@ import torch
 from pathlib import Path
 from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
+from collections import Counter
 from app.steps.base import BaseStep
 from app.services.ffmpeg_manager import FFmpegManager
+
+try:
+    from paddleocr import PaddleOCR
+except ImportError:
+    PaddleOCR = None
 
 def _color_to_rgb(val) -> tuple:
     """
@@ -50,161 +56,273 @@ class Step5Overlay(BaseStep):
         self.out_dir = Path(self.cfg.pipeline.step5_video_subbed)
         self._ocr = None
 
-    def _wrap_text(self, text, font, max_width):
+    # ============================================================
+    # 1. CÁC HÀM LOGIC GỐC TỪ B5 (GIỮ NGUYÊN)
+    # ============================================================
+    def wrap_text(self, text, font, max_width):
+        """Tự động ngắt dòng thông minh"""
         lines = []
+        # Giữ lại các ngắt dòng có chủ ý
         raw_lines = text.replace('<br />', '\n').replace('<br>', '\n').split('\n')
+        
         for raw_line in raw_lines:
             words = raw_line.split()
-            if not words: continue
+            if not words:
+                continue
+                
             current_line = []
             for word in words:
                 test_line = ' '.join(current_line + [word]) if current_line else word
                 bbox = font.getbbox(test_line)
-                if (bbox[2] - bbox[0]) <= max_width:
+                w = bbox[2] - bbox[0]
+                
+                if w <= max_width:
                     current_line.append(word)
                 else:
-                    if current_line: lines.append(' '.join(current_line))
-                    current_line = [word]
-            if current_line: lines.append(' '.join(current_line))
+                    if current_line:
+                        lines.append(' '.join(current_line))
+                        current_line = [word]
+                    else:
+                        lines.append(word)
+                        current_line = []
+                        
+            if current_line:
+                lines.append(' '.join(current_line))
+                
         return '\n'.join(lines)
 
-    def _get_active_sub_info(self, subs, current_time_ms):
+    def get_active_sub_info(self, subs, current_time_ms):
         for index, s in enumerate(subs):
             if s.start.ordinal <= current_time_ms <= s.end.ordinal:
                 clean_text = s.text.replace('<br />', '\n').replace('<br>', '\n').strip()
                 return index, clean_text
         return None, None
 
-    def _detect_smart_geometry(self, video_path, srt_path):
-        from paddleocr import PaddleOCR
-        if not self._ocr:
-            self._ocr = PaddleOCR(use_angle_cls=False, lang='ch', use_gpu=self.cfg.step3.image_use_gpu, show_log=False)
-        
-        cap = cv2.VideoCapture(str(video_path))
-        h_vid = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30
-        
+    def get_middle_frames_from_srt(self, video_path, srt_path, fps):
+        if not os.path.exists(srt_path): return []
         try:
-            subs_list = pysrt.open(str(srt_path))
-            target_frames = [int(((s.start.ordinal + s.end.ordinal) / 2.0 / 1000.0) * fps) for s in subs_list]
-        except: return None, None, None, {}
+            subs = pysrt.open(str(srt_path))
+            return [int(((s.start.ordinal + s.end.ordinal) / 2.0 / 1000.0) * fps) for s in subs]
+        except: return []
 
-        y_roi_start, y_roi_end = int(h_vid * self.cfg.step5.roi_y_start), int(h_vid * self.cfg.step5.roi_y_end)
+    def detect_smart_sub_geometry(self, video_path, srt_path, ocr_engine):
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened(): 
+            print("⚠️ Không thể mở video.")
+            return None, None, None, None
+
+        h_video = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        w_video = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+
+        target_frames = self.get_middle_frames_from_srt(video_path, srt_path, fps)
+        
+        if not target_frames:
+            print("⚠️ Không có mốc thời gian phụ đề cứng.")
+            cap.release()
+            return None, None, None, None
+
+        y_roi_start = int(h_video * self.cfg.step5.roi_y_start)
+        y_roi_end = int(h_video * self.cfg.step5.roi_y_end)
+
         candidates = {}
+        y_tol = 15 
         raw_ocr_results = {}
 
         for index, fno in enumerate(target_frames):
             cap.set(cv2.CAP_PROP_POS_FRAMES, fno)
             ret, frame = cap.read()
             if not ret: continue
-            res = self._ocr.ocr(frame[y_roi_start:y_roi_end, :], cls=False)
-            raw_ocr_results[index] = res
-            if res and res[0]:
-                for line in res[0]:
-                    box = np.array(line[0]) # FIX: Ép kiểu NumPy ngay từ đầu
-                    txt = line[1][0]
-                    y1, y2 = box[:, 1].min() + y_roi_start, box[:, 1].max() + y_roi_start
-                    h_txt = y2 - y1
-                    if h_txt > (h_vid * 0.12): continue
+
+            roi_frame = frame[y_roi_start:y_roi_end, :]
+            result = ocr_engine.ocr(roi_frame, cls=False)
+            raw_ocr_results[index] = result
+            
+            if result and result[0]:
+                for line in result[0]:
+                    pts = np.array(line[0], np.int32)
+                    text_content = line[1][0]
+                    
+                    y1 = pts[:, 1].min() + y_roi_start
+                    y2 = pts[:, 1].max() + y_roi_start
+                    x1, x2 = pts[:, 0].min(), pts[:, 0].max()
+                    
+                    h_text = y2 - y1
+                    w_text = x2 - x1
+
+                    if h_text > (h_video * 0.12): continue
+
                     matched = False
-                    for y_key in list(candidates.keys()):
-                        if abs(y_key - y1) <= 15:
-                            candidates[y_key]["boxes"].append(h_txt)
-                            candidates[y_key]["texts"].append(txt)
-                            candidates[y_key]["count"] += 1; matched = True; break
-                    if not matched: candidates[y1] = {"boxes": [h_txt], "texts": [txt], "count": 1}
+                    for y_key in candidates.keys():
+                        if abs(y_key - y1) <= y_tol:
+                            candidates[y_key]["boxes"].append((h_text, w_text))
+                            candidates[y_key]["texts"].append(text_content)
+                            candidates[y_key]["count"] += 1
+                            matched = True
+                            break
+                    
+                    if not matched:
+                        candidates[y1] = {"boxes": [(h_text, w_text)], "texts": [text_content], "count": 1}
+
         cap.release()
 
-        valid = [ (y, max(d["boxes"]), d["count"]) for y, d in candidates.items() if d["count"] > 5 ]
-        if not valid: return None, None, None, {}
-        valid.sort(key=lambda x: x[2], reverse=True)
-        best_y, best_h = int(valid[0][0]), int(valid[0][1] * 1.05)
+        valid_candidates = []
+        def normalize_text(t):
+            t = re.sub(r'[^\w\s]', '', t)
+            return t.replace(" ", "").lower()
 
-        # FIX: Sửa logic tính toán blur_boxes để tránh lỗi tuple index
-        blur_boxes = {}
-        for idx, res in raw_ocr_results.items():
-            if res and res[0]:
-                xs = []
-                for line in res[0]:
-                    box = np.array(line[0])
-                    p_y_min = box[:, 1].min() + y_roi_start
-                    if abs(p_y_min - best_y) <= 30:
-                        xs.extend(box[:, 0])
-                if xs: blur_boxes[idx] = {'x': int(min(xs)), 'w': int(max(xs)-min(xs))}
+        for y_key, data in candidates.items():
+            normalized_texts = [normalize_text(t) for t in data["texts"] if len(t.strip()) > 1]
+            if not normalized_texts: continue
+                
+            unique_texts_count = len(set(normalized_texts))
+            total_valid_counts = len(normalized_texts)
+            most_common_text_count = Counter(normalized_texts).most_common(1)[0][1]
+            
+            static_ratio = most_common_text_count / total_valid_counts
+            dynamic_ratio = unique_texts_count / total_valid_counts
+
+            if data["count"] > 5 and static_ratio <= 0.40 and (dynamic_ratio > 0.10 or unique_texts_count > 5):
+                valid_candidates.append({"y_key": y_key, "boxes": data["boxes"], "count": data["count"]})
+
+        if not valid_candidates:
+            return None, None, None, None
+
+        valid_candidates.sort(key=lambda x: x["count"], reverse=True)
+        best_candidate = valid_candidates[0]
         
-        return best_y, best_h, int(best_h * 5), blur_boxes
+        global_y = int(best_candidate["y_key"])
+        global_h = int(max([box[0] for box in best_candidate["boxes"]]) * 1.05) 
+        global_w = max([box[1] for box in best_candidate["boxes"]])
 
-    def process(self, video_path: Path, srt_path: Path):
+        dynamic_blur_boxes = {}
+        
+        for index, result in raw_ocr_results.items():
+            if not result or not result[0]: continue
+            
+            valid_x = []
+            for line in result[0]:
+                pts = np.array(line[0], np.int32)
+                y_min = pts[:, 1].min() + y_roi_start 
+                y_max = pts[:, 1].max() + y_roi_start 
+                
+                center_y = (y_min + y_max) / 2
+                
+                if abs(center_y - global_y) <= 30 or (y_min - 10 <= global_y <= y_max + 10):
+                    valid_x.extend(pts[:, 0])
+                    
+            if valid_x:
+                min_x = min(valid_x)
+                max_x = max(valid_x)
+                dynamic_blur_boxes[index] = {'x': int(min_x), 'w': int(max_x - min_x)}
+
+        print(f"✅ Chốt Sub tại Y={global_y}, H={global_h}. Đo đạc động {len(dynamic_blur_boxes)} câu.")
+        return global_y, global_h, global_w, dynamic_blur_boxes
+
+    # ============================================================
+    # 2. XỬ LÝ PIPELINE CHÍNH - TỐI ƯU GPU MAX SPEED
+    # ============================================================
+    def process(self, video_path: Path, srt_path: Path) -> Path:
         self.ensure_dir(self.out_dir)
-        txt_color_tuple = _color_to_rgb(self.cfg.step5.text_color)
-        out_color_tuple = _color_to_rgb(self.cfg.step5.outline_color)
-        abs_v = os.path.normpath(str(video_path.absolute()))
-        out_f = self.out_dir / f"{video_path.stem}.mp4"
+        abs_v_path = os.path.normpath(str(video_path.absolute()))
+        out_file = self.out_dir / f"{video_path.stem}.mp4"
+
+        # A. Dò tìm vùng Sub bằng GPU
+        logger.info(f"🤖 [Step 5] Phân tích vùng Sub cho: {video_path.name}")
+        ocr = PaddleOCR(use_angle_cls=False, lang='ch', use_gpu=True, show_log=False)
+        g_y, g_h, g_w, blur_map = self.detect_smart_sub_geometry(abs_v_path, srt_path, ocr)
         
-        # 1. Đo đạc tọa độ
-        sub_y, sub_h, sub_w, blur_map = self._detect_smart_geometry(abs_v, srt_path)
-        
-        if self._ocr: del self._ocr; self._ocr = None; gc.collect()
+        # Giải phóng GPU nhường tài nguyên cho Render
+        del ocr
+        gc.collect()
         if torch.cuda.is_available(): torch.cuda.empty_cache()
 
-        cap = cv2.VideoCapture(abs_v)
-        w, h, fps = int(cap.get(3)), int(cap.get(4)), cap.get(5)
+        cap = cv2.VideoCapture(abs_v_path)
+        w, h, fps = int(cap.get(3)), int(cap.get(4)), cap.get(5) or 30
         
-        font_scale = getattr(self.cfg.step5, "font_scale_h_percent", 0.025)
-        font_size = int(h * font_scale)
-        font_path = self.cfg.step5.font_path or "C:/Windows/Fonts/arialbd.ttf"
-        main_font = ImageFont.truetype(font_path, font_size)
+        # B. Cấu hình Font & Scale (%) từ B5
+        f_scale = getattr(self.cfg.step5, "font_scale_h_percent", 0.03)
+        f_size = int(h * f_scale)
+        f_path = self.cfg.step5.font_path or "C:/Windows/Fonts/arialbd.ttf"
+        main_font = ImageFont.truetype(f_path, f_size)
         
-        bg_fill = (0, 0, 0, 160)
-        line_spacing = int(h * self.cfg.step5.line_spacing_h_percent) if getattr(self.cfg.step5, "line_spacing_h_percent", None) else int(font_size * 0.3)
+        # Cấu hình thẩm mỹ B5
+        text_color = _color_to_rgb(self.cfg.step5.text_color)
+        bg_fill = _color_to_rgb(self.cfg.step5.outline_color)
+        line_spacing = int(h * 0.002)  # Khoảng cách giữa các dòng phụ đề
         blur_pad = int(h * 0.015)
 
-        if sub_y is None: sub_y = int(h * 0.88); sub_h = int(font_size * 1.5); sub_w = int(w * 0.8); blur_map = {}
+        # Chế độ dự phòng nếu không dò được ROI
+        fallback_mode = False
+        if g_y is None:
+            fallback_mode = True; g_y = int(h * 0.88); g_h = int(f_size * 1.5); g_w = int(w * 0.8); blur_map = {}
 
-        temp_v = self.out_dir / f"temp_{video_path.stem}.mp4"
-        cmd = [self.ffmpeg_bin, "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{w}x{h}",
-               "-r", str(fps), "-i", "-",
-               "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "22", "-pix_fmt", "yuv420p", str(temp_v)]
+        # C. KHỞI TẠO FFMPEG PIPE - TỐI ƯU GPU NVENC TỐC ĐỘ CAO
+        temp_render = self.out_dir / f"temp_render_{video_path.stem}.mp4"
+        command = [
+            self.ffmpeg_bin, '-y', '-hwaccel', 'cuda',
+            '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s', f'{w}x{h}',
+            '-pix_fmt', 'bgr24', '-r', str(fps), '-i', '-',
+            '-i', abs_v_path,
+            '-map', '0:v', '-map', '1:a?',
+            '-c:v', 'h264_nvenc', '-preset', 'p1', '-tune', 'ull', # P1 + ULL = Max Speed
+            '-rc', 'vbr', '-cq', '24', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-b:a', '192k', str(out_file)
+        ]
         
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen(command, stdin=subprocess.PIPE, bufsize=10**8)
         subs = pysrt.open(str(srt_path), encoding='utf-8')
-
-        f_idx = 0
+        
+        frame_count = 0
+        logger.info(f"🎨 [Step 5] Đang Render Subtitle (GPU Max Speed)...")
+        
         try:
             while True:
                 ret, frame = cap.read()
                 if not ret: break
-                t_ms = (f_idx / fps) * 1000
-                active_idx, text = self._get_active_sub_info(subs, t_ms)
-                if text:
-                    box = blur_map.get(active_idx, {'x': (w - sub_w)//2, 'w': sub_w})
-                    bx, bw = max(0, box['x'] - blur_pad), min(w, box['w'] + blur_pad * 2)
-                    roi = frame[sub_y:sub_y+sub_h, bx:bx+bw].copy()
-                    frame[sub_y:sub_y+sub_h, bx:bx+bw] = cv2.GaussianBlur(roi, (51, 51), 0)
-                    
+
+                current_time_ms = (frame_count / fps) * 1000
+                active_idx, text_to_draw = self.get_active_sub_info(subs, current_time_ms)
+                
+                if text_to_draw:
+                    # 1. Logic Gaussian Blur B5
+                    if not fallback_mode:
+                        box = blur_map.get(active_idx, {'x': (w - g_w)//2, 'w': g_w})
+                        bx, bw = max(0, box['x'] - blur_pad), min(w, box['w'] + blur_pad * 2)
+                        roi = frame[g_y:g_y+g_h, bx:bx+bw].copy()
+                        frame[g_y:g_y+g_h, bx:bx+bw] = cv2.GaussianBlur(roi, (51, 51), 0)
+
+                    # 2. Logic Vẽ Rounded Background & Sub B5
                     img_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)).convert('RGBA')
-                    bg_layer = Image.new('RGBA', img_pil.size, (0,0,0,0))
+                    bg_layer = Image.new('RGBA', img_pil.size, (0, 0, 0, 0))
                     draw_bg = ImageDraw.Draw(bg_layer)
                     
-                    wrapped_txt = self._wrap_text(text, main_font, int(w * 0.9))
+                    wrapped_txt = self.wrap_text(text_to_draw, main_font, int(w * 0.9))
                     bbox = draw_bg.multiline_textbbox((0, 0), wrapped_txt, font=main_font, align='center', spacing=line_spacing)
-                    tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
-                    lx, ly = (w - tw) // 2, sub_y + (sub_h - th) // 2 - bbox[1]
-                    
-                    pad_x, pad_y = int(font_size * 0.5), int(font_size * 0.15)
-                    bg_rect = [lx - pad_x, ly - pad_y, lx + tw + pad_x, ly + th + pad_y]
-                    draw_bg.rounded_rectangle(bg_rect, radius=int((bg_rect[3]-bg_rect[1])*0.3), fill=(0, 0, 0, 160))
-                    
-                    img_pil = Image.alpha_composite(img_pil, bg_layer)
-                    ImageDraw.Draw(img_pil).multiline_text((lx, ly), wrapped_txt, font=main_font, fill=txt_color_tuple, 
-                                                            align='center', spacing=line_spacing, stroke_width=2, stroke_fill=out_color_tuple)
-                    frame = cv2.cvtColor(np.array(img_pil.convert('RGB')), cv2.COLOR_RGB2BGR)
-                proc.stdin.write(frame.tobytes())
-                f_idx += 1
-        finally:
-            cap.release(); proc.stdin.close(); proc.wait()
+                    lw, lh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                    lx, ly = (w - lw) // 2, g_y + (g_h - lh) // 2 - bbox[1]
 
-        subprocess.run([self.ffmpeg_bin, "-y", "-i", str(temp_v), "-i", abs_v, "-map", "0:v", "-map", "1:a?", 
-                        "-c:v", "copy", "-c:a", "aac", str(out_f)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if temp_v.exists(): temp_v.unlink()
-        return out_f
+                    # Nền bo góc (Radius 30% chiều cao nền)
+                    bg_pad_x, bg_pad_y = int(f_size * 0.5), int(f_size * 0.15)
+                    bg_rect = [lx - bg_pad_x, ly - bg_pad_y, lx + lw + bg_pad_x, ly + lh + bg_pad_y + int(h*0.001)]
+                    draw_bg.rounded_rectangle(bg_rect, radius=int((bg_rect[3]-bg_rect[1])*0.3), fill=bg_fill)
+
+                    img_pil = Image.alpha_composite(img_pil, bg_layer)
+                    # Vẽ text lên trên
+                    ImageDraw.Draw(img_pil).multiline_text(
+                        (lx, ly), wrapped_txt, font=main_font, fill=text_color, 
+                        align='center', spacing=line_spacing, stroke_width=2, stroke_fill=(0, 0, 0, 255)
+                    )
+                    frame = cv2.cvtColor(np.array(img_pil.convert('RGB')), cv2.COLOR_RGB2BGR)
+
+                proc.stdin.write(frame.tobytes())
+                frame_count += 1
+                if frame_count % 500 == 0: logger.debug(f"Rendered {frame_count} frames...")
+
+        finally:
+            cap.release()
+            proc.stdin.close()
+            proc.wait()
+
+        logger.success(f"✅ [Step 5] DONE: {out_file.name}")
+        return out_file
