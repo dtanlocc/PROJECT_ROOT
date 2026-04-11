@@ -1,28 +1,19 @@
-# ============================================================
-# Pipeline Reup Pro v2 - Config mẫu (không dán đường dẫn máy)
-# Copy thành config.yaml và sửa theo máy của bạn.
-# ============================================================
-
 pipeline:
   workspace_root: .
-  input_videos: input
-  step1_wav: workspace/01_wav
-  step2_separated: workspace/02_separated
-  step3_srt_raw: workspace/03_srt_raw
-  step4_srt_translated: workspace/04_srt_translated
-  step5_video_subbed: workspace/05_video_subbed
-  step6_final: output
-  step6_voices_cache: workspace/06_voices
+  input_videos: C:\test
+  step1_wav: workspace\01_wav
+  step2_separated: workspace\02_separated
+  step3_srt_raw: workspace\03_srt_raw
+  step4_srt_translated: workspace\04_srt_translated
+  step5_video_subbed: workspace\05_video_subbed
+  step6_final: D:\t\PROJECT_ROOT\output
+  step6_voices_cache: workspace\06_voices
   done: done
   failed: failed
-
-# Để trống = dùng ffmpeg trong PATH; hoặc set đường dẫn tới ffmpeg.exe
-ffmpeg_bin: ""
-
+ffmpeg_bin: C:/ffmpeg/ffmpeg.exe
 step1:
   sample_rate: 16000
   channels: 1
-
 step2:
   model: htdemucs
   device: cuda
@@ -30,39 +21,42 @@ step2:
   two_stems: true
   shifts: 2
   output_float32: false
-
 step3:
-  srt_source: voice
+  srt_source: image
   model_size: large-v2
   device: cuda
-  language: zh
-  image_step_frames: 10   # Cứ N frame lấy 1 lần (Image OCR). VD: 10 = như img-to-srt
-  image_frame_interval: 0.5  # Chỉ dùng khi image_step_frames = 0
+  language: ch
+  cpu_threads: 1
+  image_frame_interval: 0.5
+  image_step_frames: 10
   image_ocr_lang: ch
   image_use_gpu: true
-  similarity_threshold: 0.7
-  image_min_duration_ms: 250
+  similarity_threshold: 0.65
+  image_min_duration_ms: 350
   image_confidence_threshold: 0.5
-
 step4:
   model_name: gemini-2.5-flash
-  source_lang: zh-CN
+  source_lang: zh
   target_lang: vi
   gemini_api_keys: []
   max_lines_per_chunk: 250
-
 step5:
   ocr_lang: ch
-  roi_y_start: 0.0
+  roi_y_start: 0.6338028169014085
   roi_y_end: 1.0
   font_path: ''
   font_size: 45
   max_words_per_line: 10
-  font_scale_h_percent: 0.025
-  line_spacing_scale_h_percent: 0.005
-  text_color: [255, 255, 0, 255]
-  outline_color: [0, 0, 0, 255]
-
+  text_color:
+  - 255
+  - 255
+  - 255
+  - 255
+  outline_color:
+  - 0
+  - 0
+  - 0
+  - 255
 step6:
   tts_lang: vi
   bg_volume: -12.0
@@ -71,3 +65,5 @@ step6:
   min_words_for_tts: 0
   speedup_when_short: 1.5
   original_voice_volume: 0.2
+  bg_volume: 0.2
+  tts_engine: qwen

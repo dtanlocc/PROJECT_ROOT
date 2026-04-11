@@ -1,15 +1,14 @@
-import os
-import ctypes
+from vietnormalizer import VietnameseNormalizer
 
-# Kiểm tra xem Windows có load được file không
-dll_path = r"C:\Program Files (x86)\Reup_Pro\zlibwapi.dll"
-try:
-    ctypes.CDLL(dll_path)
-    print("✅ Windows nạp zlibwapi thành công!")
-except Exception as e:
-    print(f"❌ Windows từ chối nạp zlibwapi. Lỗi: {e}")
+normalizer = VietnameseNormalizer()
 
-# Xem các thư mục mà Windows đang tìm DLL
-print("\nCác đường dẫn Windows đang tìm DLL:")
-for path in os.environ['PATH'].split(';'):
-    print(path)
+text = "Mbappe kiếm 40.000 USD cho mỗi đường chuyền. Hôm nay là 25/12/2025."
+normalized = normalizer.normalize(text)
+print(normalized)
+    def _get_tts_python_path(self) -> Path:
+        """Lấy đường dẫn python của venv_tts"""
+        base = Path("venv_tts")
+        if os.name == "nt":  # Windows
+            return base / "Scripts" / "python.exe"
+        else:  # Linux/Mac
+            return base / "bin" / "python"

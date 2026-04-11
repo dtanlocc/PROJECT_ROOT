@@ -149,10 +149,12 @@ if __name__ == "__main__":
         import shutil
         try: shutil.copy("config.dist.yaml", "config.yaml")
         except: pass
-
+    from PyQt6.QtWidgets import QApplication
     # 1. Khởi tạo App Chính (Ẩn ngay lập tức)
-    app = ProGUI()
-    app.mainloop()
+    app = QApplication(sys.argv)
+    window = ProGUI()
+    window.showMaximized()
+    sys.exit(app.exec())
     # app.withdraw() # Ẩn đi để chờ check security
 
     # # 2. Định nghĩa hàm khởi động quy trình

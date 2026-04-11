@@ -36,3 +36,9 @@ testEnv
 
 .env
 .vscode
+processing
+subfinder
+venv_tts
+*.log
+test_gwen_tts.wav
+test.py

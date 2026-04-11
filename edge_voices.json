@@ -1,0 +1,29 @@
+{
+  "vi": [
+    {"id": "vi-VN-NamMinhNeural", "name": "Nam Minh (Nam)"},
+    {"id": "vi-VN-HoaiMyNeural", "name": "Hoài My (Nữ)"}
+  ],
+  "en": [
+    {"id": "en-US-ChristopherNeural", "name": "Christopher (Nam trầm)"},
+    {"id": "en-US-AriaNeural", "name": "Aria (Nữ truyền cảm)"},
+    {"id": "en-US-GuyNeural", "name": "Guy (Nam)"},
+    {"id": "en-US-AnaNeural", "name": "Ana (Nữ trẻ)"}
+  ],
+  "zh": [
+    {"id": "zh-CN-YunxiNeural", "name": "Vân Hi - Yunxi (Nam)"},
+    {"id": "zh-CN-XiaoxiaoNeural", "name": "Tiêu Tiêu - Xiaoxiao (Nữ)"},
+    {"id": "zh-CN-YunjianNeural", "name": "Vân Kiện - Yunjian (Nam Film)"}
+  ],
+  "ja": [
+    {"id": "ja-JP-KeitaNeural", "name": "Keita (Nam)"},
+    {"id": "ja-JP-NanamiNeural", "name": "Nanami (Nữ)"}
+  ],
+  "ko": [
+    {"id": "ko-KR-InJoonNeural", "name": "InJoon (Nam)"},
+    {"id": "ko-KR-SunHiNeural", "name": "SunHi (Nữ)"}
+  ],
+  "th": [
+    {"id": "th-TH-NiwatNeural", "name": "Niwat (Nam)"},
+    {"id": "th-TH-PremwadeeNeural", "name": "Premwadee (Nữ)"}
+  ]
+}

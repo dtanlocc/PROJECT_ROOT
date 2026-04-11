@@ -1,0 +1,174 @@
+{
+  "languages": {
+    "zh": {
+      "code": "zh",
+      "name": "Tiếng Trung",
+      "whisper": "zh",
+      "paddleocr": "ch",
+      "gemini": "zh-CN",
+      "google_translate": "zh-CN",
+      "qwen_tts": "Chinese",
+      "edge_prefix": "zh-CN"
+    },
+    "ja": {
+      "code": "ja",
+      "name": "Tiếng Nhật",
+      "whisper": "ja",
+      "paddleocr": "japan",
+      "gemini": "ja",
+      "google_translate": "ja",
+      "qwen_tts": "Japanese",
+      "edge_prefix": "ja-JP"
+    },
+    "ko": {
+      "code": "ko",
+      "name": "Tiếng Hàn",
+      "whisper": "ko",
+      "paddleocr": "korean",
+      "gemini": "ko",
+      "google_translate": "ko",
+      "qwen_tts": "Korean",
+      "edge_prefix": "ko-KR"
+    },
+    "en": {
+      "code": "en",
+      "name": "Tiếng Anh",
+      "whisper": "en",
+      "paddleocr": "en",
+      "gemini": "en",
+      "google_translate": "en",
+      "qwen_tts": "English",
+      "edge_prefix": "en-US"
+    },
+    "vi": {
+      "code": "vi",
+      "name": "Tiếng Việt",
+      "whisper": "vi",
+      "paddleocr": "vi",
+      "gemini": "vi",
+      "google_translate": "vi",
+      "qwen_tts": "Vietnamese",
+      "edge_prefix": "vi-VN"
+    },
+    "th": {
+      "code": "th",
+      "name": "Tiếng Thái",
+      "whisper": "th",
+      "paddleocr": "th",
+      "gemini": "th",
+      "google_translate": "th",
+      "qwen_tts": "Thai",
+      "edge_prefix": "th-TH"
+    },
+    "id": {
+      "code": "id",
+      "name": "Tiếng Indonesia",
+      "whisper": "id",
+      "paddleocr": "id",
+      "gemini": "id",
+      "google_translate": "id",
+      "qwen_tts": "Indonesian",
+      "edge_prefix": "id-ID"
+    },
+    "ms": {
+      "code": "ms",
+      "name": "Tiếng Mã Lai",
+      "whisper": "ms",
+      "paddleocr": "ms",
+      "gemini": "ms",
+      "google_translate": "ms",
+      "qwen_tts": "Malay",
+      "edge_prefix": "ms-MY"
+    },
+    "fr": {
+      "code": "fr",
+      "name": "Tiếng Pháp",
+      "whisper": "fr",
+      "paddleocr": "fr",
+      "gemini": "fr",
+      "google_translate": "fr",
+      "qwen_tts": "French",
+      "edge_prefix": "fr-FR"
+    },
+    "de": {
+      "code": "de",
+      "name": "Tiếng Đức",
+      "whisper": "de",
+      "paddleocr": "de",
+      "gemini": "de",
+      "google_translate": "de",
+      "qwen_tts": "German",
+      "edge_prefix": "de-DE"
+    },
+    "ru": {
+      "code": "ru",
+      "name": "Tiếng Nga",
+      "whisper": "ru",
+      "paddleocr": "ru",
+      "gemini": "ru",
+      "google_translate": "ru",
+      "qwen_tts": "Russian",
+      "edge_prefix": "ru-RU"
+    },
+    "es": {
+      "code": "es",
+      "name": "Tiếng Tây Ban Nha",
+      "whisper": "es",
+      "paddleocr": "es",
+      "gemini": "es",
+      "google_translate": "es",
+      "qwen_tts": "Spanish",
+      "edge_prefix": "es-ES"
+    },
+    "pt": {
+      "code": "pt",
+      "name": "Tiếng Bồ Đào Nha",
+      "whisper": "pt",
+      "paddleocr": "pt",
+      "gemini": "pt",
+      "google_translate": "pt",
+      "qwen_tts": "Portuguese",
+      "edge_prefix": "pt-PT"
+    },
+    "it": {
+      "code": "it",
+      "name": "Tiếng Ý",
+      "whisper": "it",
+      "paddleocr": "it",
+      "gemini": "it",
+      "google_translate": "it",
+      "qwen_tts": "Italian",
+      "edge_prefix": "it-IT"
+    },
+    "ar": {
+      "code": "ar",
+      "name": "Tiếng Ả Rập",
+      "whisper": "ar",
+      "paddleocr": "ar",
+      "gemini": "ar",
+      "google_translate": "ar",
+      "qwen_tts": "Arabic",
+      "edge_prefix": "ar-SA"
+    },
+    "hi": {
+      "code": "hi",
+      "name": "Tiếng Hindi",
+      "whisper": "hi",
+      "paddleocr": "hi",
+      "gemini": "hi",
+      "google_translate": "hi",
+      "qwen_tts": "Hindi",
+      "edge_prefix": "hi-IN"
+    },
+    "tr": {
+      "code": "tr",
+      "name": "Tiếng Thổ Nhĩ Kỳ",
+      "whisper": "tr",
+      "paddleocr": "tr",
+      "gemini": "tr",
+      "google_translate": "tr",
+      "qwen_tts": "Turkish",
+      "edge_prefix": "tr-TR"
+    }
+  }
+}
