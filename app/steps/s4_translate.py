@@ -1,6 +1,6 @@
 # file: app/steps/s4_translate.py
 """
-Step 4: Dịch SRT bằng Gemini API.
+Step 4: Dịch SRT bằng Gemini API. Hỗ trợ Fallback sang Google Translate.
 """
 import re
 import json
@@ -75,7 +75,7 @@ def _extract_json_array(text: str):
     start = txt.find("[")
     end = txt.rfind("]")
     if start != -1 and end != -1 and end > start:
-        candidate = txt[start : end + 1].replace(""", '"').replace(""", '"').replace("'", "'")
+        candidate = txt[start : end + 1].replace('"""', '"').replace("''", "'")
         try:
             val = json.loads(candidate)
             if isinstance(val, list):
@@ -89,7 +89,7 @@ class Step4Translate(BaseStep):
     def __init__(self, cfg):
         super().__init__(cfg)
         self.out_dir = self.cfg.pipeline.step4_srt_translated
-        self.registry = LanguageRegistry()   # ← Thêm Registry
+        self.registry = LanguageRegistry()
 
     def _translate_chunk_gemini(self, chunk_entries, key_idx_start, keys, model_name, source_lang, target_lang):
         """Dịch 1 chunk bằng Gemini."""
@@ -104,7 +104,6 @@ class Step4Translate(BaseStep):
         key_idx = key_idx_start
         attempt = 0
 
-        # Gợi ý tên ngôn ngữ cho prompt (cải thiện chất lượng dịch)
         lang_hint = "Chinese" if source_lang.startswith("zh") else source_lang
         target_hint = "Vietnamese" if target_lang == "vi" else target_lang
 
@@ -126,7 +125,6 @@ Requirements:
 Input lines:
 {joined_lines}
 """
-
             try:
                 resp = model.generate_content(prompt)
                 if not resp or not getattr(resp, "text", None):
@@ -143,7 +141,40 @@ Input lines:
                 key_idx = (key_idx + 1) % num_keys
                 attempt += 1
 
+        # Trả về None nếu tất cả các key đều thất bại
         return None, key_idx
+
+    def _translate_with_google(self, entries, google_source, google_target):
+        """Dịch toàn bộ entries bằng Google Translate."""
+        from deep_translator import GoogleTranslator
+        import time
+
+        translator = GoogleTranslator(source=google_source, target=google_target)
+        texts = [line for entry in entries for line in entry["text"]]
+        results = []
+
+        for i in range(0, len(texts), 50):
+            chunk = texts[i:i + 50]
+            try:
+                res = translator.translate_batch(chunk)
+                results.extend(res)
+                time.sleep(0.5)
+            except Exception as e:
+                logger.warning(f"Google Translator lỗi chunk, thử dịch từng câu: {e}")
+                for t in chunk:
+                    try:
+                        results.append(translator.translate(t))
+                    except:
+                        results.append(t)
+
+        # Gán kết quả trở lại
+        idx = 0
+        for entry in entries:
+            n = len(entry["text"])
+            entry["text"] = results[idx : idx + n] if idx + n <= len(results) else entry["text"]
+            idx += n
+
+        return entries
 
     def process(self, srt_path: Path) -> Path:
         self.ensure_dir(self.out_dir)
@@ -156,34 +187,6 @@ Input lines:
         try:
             content = srt_path.read_text(encoding="utf-8", errors="ignore")
         except Exception as e:
-            logger.error(f"Đọc SRT: {e}")
-            return srt_path
-
-        entries = _parse_srt_blocks(content)
-        if not entries:
-            logger.warning("SRT không có block hợp lệ.")
-            return srt_path
-
-        keys = list(self.cfg.step4.gemini_api_keys or [])
-        model_name = self.cfg.step4.model_name or "gemini-2.5-flash"
-
-        # ==================== LẤY NGÔN NGỮ TỪ REGISTRY ====================
-        source_code = getattr(self.cfg, 'source_lang', 'zh')
-        target_code = getattr(self.cfg, 'target_lang', 'vi')
-
-        src_lang = self.registry.get(source_code)
-        tgt_lang = self.registry.get(target_code)
-
-        gemini_source = src_lang.gemini
-        google_source = getattr(src_lang, 'google_translate', gemini_source)
-        google_target = getattr(tgt_lang, 'google_translate', target_code)                     # ← Đây là dòng quan trọng nhất
-
-        logger.info(f"Dịch: {src_lang.name} → {tgt_lang.name} | Google: {google_source} → {google_target}")
-        # =================================================================
-
-        try:
-            content = srt_path.read_text(encoding="utf-8", errors="ignore")
-        except Exception as e:
             logger.error(f"Đọc SRT thất bại: {e}")
             return srt_path
 
@@ -192,15 +195,25 @@ Input lines:
             logger.warning("SRT không có block hợp lệ.")
             return srt_path
 
+        # Lấy ngôn ngữ
+        source_code = getattr(self.cfg, 'source_lang', 'zh')
+        target_code = getattr(self.cfg, 'target_lang', 'vi')
+        src_lang = self.registry.get(source_code)
+        tgt_lang = self.registry.get(target_code)
+
+        gemini_source = src_lang.gemini
+        google_source = getattr(src_lang, 'google_translate', gemini_source)
+        google_target = getattr(tgt_lang, 'google_translate', target_code)
+
         keys = list(getattr(self.cfg.step4, 'gemini_api_keys', []) or [])
         model_name = getattr(self.cfg.step4, 'model_name', "gemini-2.5-flash")
         max_lines = getattr(self.cfg.step4, "max_lines_per_chunk", 250)
 
-        if keys:
-            # ===================== GEMINI =====================
-            logger.info(f"Dịch bằng Gemini: {src_lang.name} → {tgt_lang.name} ({gemini_source} → {google_target})")
+        use_google_fallback = False
 
-            # Phần chunking và dịch Gemini (giữ nguyên logic cũ của bạn)
+        if keys:
+            logger.info(f"Dịch bằng Gemini: {src_lang.name} → {tgt_lang.name}")
+
             chunks = []
             current_chunk = []
             current_count = 0
@@ -217,59 +230,39 @@ Input lines:
 
             translated_all = []
             key_idx = 0
+            
             for ci, chunk_entries in enumerate(chunks):
                 translated_lines, key_idx = self._translate_chunk_gemini(
                     chunk_entries, key_idx, keys, model_name, gemini_source, google_target
                 )
+                
+                # NẾU GEMINI THẤT BẠI HOÀN TOÀN TẠI CHUNK NÀY (HẾT KEY)
                 if translated_lines is None:
-                    logger.error(f"Không thể dịch chunk {ci} bằng Gemini.")
-                    return srt_path
+                    logger.warning(f"⚠️ Gemini thất bại hoàn toàn ở chunk {ci}. Đang fallback sang Google Translate...")
+                    use_google_fallback = True
+                    break # Thoát vòng lặp Gemini
+                
                 translated_all.extend(translated_lines)
 
-            # Gán kết quả dịch vào entries
-            idx = 0
-            for entry in entries:
-                cnt = len(entry["text"])
-                entry["text"] = translated_all[idx : idx + cnt]
-                idx += cnt
+            # Nếu chạy hết chunk mà không kích hoạt fallback, tiến hành lưu file Gemini
+            if not use_google_fallback:
+                idx = 0
+                for entry in entries:
+                    cnt = len(entry["text"])
+                    entry["text"] = translated_all[idx : idx + cnt]
+                    idx += cnt
 
-            out_file.write_text(_build_srt(entries), encoding="utf-8")
-            logger.success(f"✅ Đã dịch xong bằng Gemini: {out_file.name}")
+                out_file.write_text(_build_srt(entries), encoding="utf-8")
+                logger.success(f"✅ Đã dịch xong bằng Gemini: {out_file.name}")
+                return out_file
 
-        else:
-            # ===================== GOOGLE TRANSLATOR =====================
-            logger.info(f"Dịch bằng Google Translator: {src_lang.name} → {tgt_lang.name} "
-                       f"({google_source} → {google_target})")
-
-            from deep_translator import GoogleTranslator
-            import time
-
-            translator = GoogleTranslator(source=google_source, target=google_target)
-
-            texts = [line for entry in entries for line in entry["text"]]
-
-            results = []
-            for i in range(0, len(texts), 50):
-                chunk = texts[i:i + 50]
-                try:
-                    res = translator.translate_batch(chunk)
-                    results.extend(res)
-                    time.sleep(0.5)
-                except Exception as e:
-                    logger.warning(f"Google Translator lỗi: {e}")
-                    for t in chunk:
-                        try:
-                            results.append(translator.translate(t))
-                        except:
-                            results.append(t)
-
-            # Gán kết quả trở lại
-            idx = 0
-            for entry in entries:
-                n = len(entry["text"])
-                entry["text"] = results[idx : idx + n] if idx + n <= len(results) else entry["text"]
-                idx += n
-
+        # ===================== GOOGLE TRANSLATOR (CHÍNH HOẶC FALLBACK) =====================
+        # Chạy vào đây nếu: 1. Không có API key ban đầu HOẶC 2. Gemini bị lỗi hết key
+        if not keys or use_google_fallback:
+            logger.info(f"Dịch bằng Google Translator: {src_lang.name} → {tgt_lang.name} ({google_source} → {google_target})")
+            
+            entries = self._translate_with_google(entries, google_source, google_target)
+            
             out_file.write_text(_build_srt(entries), encoding="utf-8")
             logger.success(f"✅ Đã dịch xong bằng Google Translator: {out_file.name}")
 

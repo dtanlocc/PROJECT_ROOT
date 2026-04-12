@@ -84,14 +84,12 @@ class Step6Mix(BaseStep):
     def _normalize_text(self, text: str) -> str:
         if not text:
             return ""
-        
         if self.target_lang == "vi":
             try:
                 return self.normalizer.normalize(text).strip()
             except:
                 pass
-                
-        # NẾU LÀ NGÔN NGỮ KHÁC (Nhật, Trung, Anh...): Giữ nguyên 100% bản gốc
+        # Tiếng Nhật/Trung/Anh: giữ nguyên, KHÔNG normalize
         return text.strip()
 
     def _get_tts_python_path(self) -> Path:
@@ -391,19 +389,115 @@ class Step6Mix(BaseStep):
     # ================================================================
     #  EDGE TTS (GIỐNG CODE CŨ)
     # ================================================================
+    # async def gen_tts_edge(self, idx: int, text: str, out_path: Path):
+    #     if not text.strip():
+    #         AudioSegment.silent(duration=800).export(str(out_path), format="mp3")
+    #         return
+        
+    #     prepared_text, _ = self._prepare_text_for_tts(text)
+    #     try:
+    #         import edge_tts
+    #         voice_id = getattr(self.cfg.step6, "edge_voice", None)
+    #         communicate = edge_tts.Communicate(prepared_text, voice_id)
+    #         await communicate.save(str(out_path))
+    #     except Exception as e:
+    #         print(f"Lỗi TTS: {e}")
+    
+    
+    # async def gen_tts_edge(self, idx: int, text: str, out_path: Path):
+    #     import asyncio
+    #     from pydub import AudioSegment
+    #     import edge_tts
+
+    #     # 1. Bỏ qua nếu text rỗng từ đầu
+    #     if not text.strip():
+    #         AudioSegment.silent(duration=800).export(str(out_path), format="mp3")
+    #         return
+        
+    #     # Chuẩn bị text
+    #     prepared_text, _ = self._prepare_text_for_tts(text)
+        
+    #     # 2. Xử lý trường hợp text bị rỗng sau khi filter (chuẩn hóa)
+    #     if not prepared_text.strip():
+    #         print(f"[Cảnh báo] Text rỗng sau khi xử lý tại index {idx}. Bỏ qua.")
+    #         AudioSegment.silent(duration=800).export(str(out_path), format="mp3")
+    #         return
+
+    #     # 3. Gắn giọng đọc mặc định nếu trong file config bị thiếu
+    #     voice_id = getattr(self.cfg.step6, "edge_voice", "vi-VN-HoaiMyNeural") 
+
+    #     # 4. Cơ chế Retry để chống rớt mạng của Edge TTS
+    #     max_retries = 3
+    #     for attempt in range(max_retries):
+    #         try:
+    #             communicate = edge_tts.Communicate(prepared_text, voice_id)
+    #             await communicate.save(str(out_path))
+    #             return  # Nếu thành công thì thoát hàm luôn
+                
+    #         except Exception as e:
+    #             print(f"Lỗi TTS tại index {idx} (Lần thử {attempt + 1}/{max_retries}): {e}")
+    #             if attempt < max_retries - 1:
+    #                 await asyncio.sleep(2)  # Nghỉ 2 giây rồi thử lại
+    #             else:
+    #                 # 5. Nếu thử 3 lần đều thất bại -> Tạo file im lặng để không làm crash tool
+    #                 print(f"[Lỗi nặng] Không thể tạo TTS cho index {idx}. Chèn file im lặng thay thế.")
+    #                 AudioSegment.silent(duration=800).export(str(out_path), format="mp3")
+    
+    
+    
     async def gen_tts_edge(self, idx: int, text: str, out_path: Path):
+        import asyncio
+        import random
+        from pydub import AudioSegment
+        import edge_tts
+
+        if not hasattr(self, '_tts_semaphore'):
+            self._tts_semaphore = asyncio.Semaphore(3)
+
         if not text.strip():
             AudioSegment.silent(duration=800).export(str(out_path), format="mp3")
             return
         
         prepared_text, _ = self._prepare_text_for_tts(text)
-        try:
-            import edge_tts
-            voice_id = getattr(self.cfg.step6, "edge_voice", None)
-            communicate = edge_tts.Communicate(prepared_text, voice_id)
-            await communicate.save(str(out_path))
-        except Exception as e:
-            print(f"Lỗi TTS: {e}")
+        
+        if not prepared_text.strip():
+            # print(f"[Cảnh báo] Text rỗng sau khi xử lý tại index {idx}. Bỏ qua.")
+            AudioSegment.silent(duration=800).export(str(out_path), format="mp3")
+            return
+
+        voice_id = getattr(self.cfg.step6, "edge_voice", "vi-VN-HoaiMyNeural") 
+
+        async with self._tts_semaphore:
+            await asyncio.sleep(random.uniform(1, 2))
+
+            # --- THAY ĐỔI LOGIC RETRY TẠI ĐÂY ---
+            max_rounds = 2             # Tổng số vòng làm lại (Vòng 1 và Vòng 2)
+            max_retries_per_round = 3  # Số lần thử trong mỗi vòng
+
+            for round_idx in range(max_rounds):
+                for attempt in range(max_retries_per_round):
+                    try:
+                        communicate = edge_tts.Communicate(prepared_text, voice_id)
+                        await communicate.save(str(out_path))
+                        return  # Thành công thì thoát luôn
+                        
+                    except Exception as e:
+                        # print(f"Lỗi TTS tại index {idx} (Vòng {round_idx + 1}, Lần thử {attempt + 1}): {e}")
+                        
+                        if attempt < max_retries_per_round - 1:
+                            # Nếu chưa hết 3 lần của vòng hiện tại -> Nghỉ ngắn 2, 3 giây rồi thử tiếp
+                            await asyncio.sleep(2 + attempt) 
+                        else:
+                            # Đã lỗi 3 lần liên tiếp trong vòng này
+                            if round_idx < max_rounds - 1:
+                                # Nếu vẫn còn vòng sau -> Đợi 10 giây trước khi bắt đầu Vòng 2
+                                # print(f"⚠️ Index {idx} lỗi 3 lần liên tiếp. Đang nghỉ 10 giây để làm lại vòng {round_idx + 2}...")
+                                await asyncio.sleep(10)
+                            else:
+                                # Nếu đã hết sạch cơ hội của cả Vòng 2 -> Bó tay
+                                # print(f"[Lỗi nặng] Đã thử lại đợt 2 nhưng vẫn thất bại ở index {idx}. Chèn file im lặng.")
+                                AudioSegment.silent(duration=800).export(str(out_path), format="mp3")
+                                return # Bắt buộc phải có return ở đây để kết thúc
 
     # ================================================================
     #  CĂN CHỈNH THỜI GIAN (FFMPEG SPEEDUP - GIỐNG CODE CŨ)

@@ -21,14 +21,13 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QFileDialog, QListWidget, QTableWidget, QFormLayout,
                              QTableWidgetItem, QHeaderView, QAbstractItemView, QGroupBox,
                              QLineEdit, QComboBox, QColorDialog, QDialog, QVBoxLayout, QFormLayout, QLabel, QLineEdit, QComboBox,
-    QPushButton, QHBoxLayout, QColorDialog, QTextEdit, QTabWidget )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QEvent
-from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QPen, QCursor, QFont
+    QPushButton, QHBoxLayout, QColorDialog, QTextEdit, QTabWidget, QFrame, QScrollArea, QStackedWidget)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QEvent, QPropertyAnimation, QEasingCurve, QRect
+from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QPen, QCursor, QFont, QPalette, QLinearGradient, QBrush, QPainterPath, QIcon
 import hashlib
 
 from app.core.language.registry import LanguageRegistry, get_edge_voices_for_language
 
-# --- IMPORT CORE ENGINE ---
 try:
     from app import __version__
     from app.core.config_loader import ConfigLoader
@@ -40,7 +39,315 @@ except ImportError:
     print("Cảnh báo: Đang chạy độc lập, không tìm thấy Core Engine.")
 
 # ======================================================================
-# CÁC HÀM HELPER XỬ LÝ MÀU SẮC
+# DESIGN TOKENS — CINEMATIC DARK STUDIO PALETTE
+# ======================================================================
+# ======================================================================
+# DESIGN TOKENS — ULTRA PREMIUM STUDIO PALETTE
+# ======================================================================
+# ======================================================================
+# DESIGN TOKENS — ULTRA PREMIUM STUDIO PALETTE
+# ======================================================================
+COLORS = {
+    # Nền (Backgrounds) - Xám than sâu thẳm, không dùng đen tuyền
+    "bg_base": "#0B0C10",       
+    "bg_surface": "#12141A",    
+    "bg_elevated": "#1A1D24",   
+    "bg_hover": "#222731",      
+    "bg_active": "#2A313E",     
+
+    # Điểm nhấn (Accents) 
+    "accent_primary": "#00C8FF",   
+    "accent_secondary": "#00FF9D", 
+    "accent_amber": "#FFB800",     
+    "accent_red": "#FF4757",       
+
+    # Tương thích ngược với các hàm ở dưới (Đừng xóa)
+    "accent_cyan": "#00C8FF",   
+    "accent_green": "#00FF9D",
+    "accent_purple": "#7C3AED",
+
+    # Chữ (Text) - Trắng kem nhẹ nhàng để không chói mắt
+    "text_primary": "#E2E8F0",     
+    "text_secondary": "#94A3B8",   
+    "text_muted": "#475569",       
+
+    # Viền (Borders) - Viền siêu mỏng, sắc nét
+    "border_subtle": "#1E293B",    
+    "border_normal": "#334155",    
+    "border_focus": "#00C8FF",
+
+    # Trạng thái
+    "status_ok": "#00FF9D", 
+    "status_warn": "#FFB800", 
+    "status_err": "#FF4757",
+}
+
+FONTS = {
+    "mono":    "'JetBrains Mono', 'Consolas', monospace",
+    "ui":      "'Inter', 'Segoe UI', system-ui, sans-serif",
+    "display": "'Inter', 'Segoe UI', system-ui, sans-serif",
+}
+
+# ======================================================================
+# GLOBAL STYLESHEET (QSS) — ĐÃ TỐI ƯU HÓA HOÀN TOÀN
+# ======================================================================
+GLOBAL_QSS = f"""
+/* === BASE TỔNG THỂ === */
+QMainWindow, QWidget {{
+    background-color: {COLORS['bg_base']};
+    color: {COLORS['text_primary']};
+    font-family: {FONTS['ui']};
+    font-size: 13px;
+}}
+QDialog {{
+    background-color: {COLORS['bg_surface']};
+}}
+
+/* === SPLITTER (Thanh kéo thu phóng) === */
+QSplitter::handle {{
+    background-color: {COLORS['border_subtle']};
+    width: 2px;
+    margin: 6px 0px;
+}}
+QSplitter::handle:hover {{
+    background-color: {COLORS['accent_primary']};
+}}
+
+/* === GROUPBOX (Khung viền) === */
+QGroupBox {{
+    background-color: {COLORS['bg_surface']};
+    border: 1px solid {COLORS['border_subtle']};
+    border-radius: 8px;
+    margin-top: 14px;
+    padding-top: 16px;
+}}
+QGroupBox::title {{
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 12px;
+    top: -8px;
+    color: {COLORS['text_secondary']};
+    font-weight: bold;
+    font-size: 12px;
+    background-color: {COLORS['bg_base']};
+    padding: 0px 8px;
+    letter-spacing: 0.5px;
+}}
+
+/* === THANH CUỘN (SCROLLBARS) XỊN === */
+QScrollBar:vertical {{
+    background: {COLORS['bg_surface']};
+    width: 8px;
+    border-radius: 4px;
+    margin: 2px;
+}}
+QScrollBar::handle:vertical {{
+    background: {COLORS['border_normal']};
+    border-radius: 4px;
+    min-height: 30px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background: {COLORS['text_muted']};
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
+
+QScrollBar:horizontal {{
+    background: {COLORS['bg_surface']};
+    height: 8px;
+    border-radius: 4px;
+    margin: 2px;
+}}
+QScrollBar::handle:horizontal {{
+    background: {COLORS['border_normal']};
+    border-radius: 4px;
+}}
+QScrollBar::handle:horizontal:hover {{
+    background: {COLORS['text_muted']};
+}}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; }}
+
+/* === INPUTS & TEXT EDITS === */
+QLineEdit, QTextEdit {{
+    background-color: {COLORS['bg_elevated']};
+    color: {COLORS['text_primary']};
+    border: 1px solid {COLORS['border_normal']};
+    border-radius: 6px;
+    padding: 7px 12px;
+    selection-background-color: {COLORS['accent_primary']}40;
+}}
+QLineEdit:hover, QTextEdit:hover {{
+    border-color: {COLORS['text_muted']};
+}}
+QLineEdit:focus, QTextEdit:focus {{
+    border: 1px solid {COLORS['border_focus']};
+    background-color: {COLORS['bg_hover']};
+}}
+QLineEdit::placeholder, QTextEdit::placeholder {{
+    color: {COLORS['text_muted']};
+}}
+
+/* === COMBOBOX (Menu thả xuống) === */
+QComboBox {{
+    background-color: {COLORS['bg_elevated']};
+    color: {COLORS['text_primary']};
+    border: 1px solid {COLORS['border_normal']};
+    border-radius: 6px;
+    padding: 6px 12px;
+    min-height: 28px;
+}}
+QComboBox:hover {{
+    border-color: {COLORS['text_muted']};
+}}
+QComboBox:focus {{
+    border-color: {COLORS['border_focus']};
+}}
+QComboBox::drop-down {{
+    border: none;
+    width: 28px;
+}}
+QComboBox::down-arrow {{
+    image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid {COLORS['text_secondary']};
+}}
+QComboBox QAbstractItemView {{
+    background-color: {COLORS['bg_elevated']};
+    color: {COLORS['text_primary']};
+    border: 1px solid {COLORS['border_normal']};
+    border-radius: 6px;
+    selection-background-color: {COLORS['bg_active']};
+    selection-color: {COLORS['accent_primary']};
+    outline: none;
+    padding: 4px;
+}}
+
+/* === LIST WIDGET === */
+QListWidget {{
+    background-color: {COLORS['bg_elevated']};
+    border: 1px solid {COLORS['border_subtle']};
+    border-radius: 8px;
+    outline: none;
+    padding: 4px;
+}}
+QListWidget::item {{
+    padding: 8px 12px;
+    border-radius: 4px;
+    color: {COLORS['text_secondary']};
+    border: 1px solid transparent;
+}}
+QListWidget::item:hover {{
+    background-color: {COLORS['bg_hover']};
+    color: {COLORS['text_primary']};
+}}
+QListWidget::item:selected {{
+    background-color: {COLORS['bg_active']};
+    color: {COLORS['text_primary']};
+    border: 1px solid {COLORS['border_normal']};
+    border-left: 3px solid {COLORS['accent_primary']};
+}}
+
+/* === TABLE WIDGET === */
+QTableWidget {{
+    background-color: {COLORS['bg_elevated']};
+    border: 1px solid {COLORS['border_subtle']};
+    border-radius: 8px;
+    gridline-color: {COLORS['border_subtle']};
+    outline: none;
+}}
+QTableWidget::item {{
+    padding: 6px 8px;
+    color: {COLORS['text_primary']};
+    border: none;
+    border-bottom: 1px solid {COLORS['bg_base']};
+}}
+QTableWidget::item:selected {{
+    background-color: {COLORS['bg_active']};
+    color: {COLORS['text_primary']};
+}}
+QTableWidget::item:hover {{
+    background-color: {COLORS['bg_hover']};
+}}
+QHeaderView::section {{
+    background-color: {COLORS['bg_surface']};
+    color: {COLORS['text_secondary']};
+    border: none;
+    border-bottom: 1px solid {COLORS['border_subtle']};
+    border-right: 1px solid {COLORS['bg_base']};
+    padding: 8px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}}
+
+/* === PROGRESS BAR === */
+QProgressBar {{
+    background-color: {COLORS['bg_elevated']};
+    border: 1px solid {COLORS['border_subtle']};
+    border-radius: 4px;
+    height: 8px;
+}}
+QProgressBar::chunk {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 {COLORS['accent_primary']}, stop:1 {COLORS['accent_secondary']});
+    border-radius: 3px;
+}}
+
+/* === TABS === */
+QTabWidget::pane {{
+    border: 1px solid {COLORS['border_subtle']};
+    border-radius: 8px;
+    background-color: {COLORS['bg_surface']};
+    top: -1px;
+}}
+QTabBar::tab {{
+    background-color: transparent;
+    color: {COLORS['text_secondary']};
+    padding: 10px 20px;
+    margin-right: 2px;
+    border-bottom: 2px solid transparent;
+    font-weight: 600;
+    font-size: 13px;
+}}
+QTabBar::tab:selected {{
+    color: {COLORS['accent_primary']};
+    border-bottom: 2px solid {COLORS['accent_primary']};
+}}
+QTabBar::tab:hover:!selected {{
+    color: {COLORS['text_primary']};
+    background-color: {COLORS['bg_hover']};
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+}}
+
+/* === CHECKBOXES === */
+QCheckBox {{
+    color: {COLORS['text_secondary']};
+    spacing: 10px;
+}}
+QCheckBox:hover {{
+    color: {COLORS['text_primary']};
+}}
+QCheckBox::indicator {{
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    border: 1px solid {COLORS['border_normal']};
+    background-color: {COLORS['bg_elevated']};
+}}
+QCheckBox::indicator:hover {{
+    border-color: {COLORS['text_muted']};
+}}
+QCheckBox::indicator:checked {{
+    background-color: {COLORS['accent_primary']};
+    border-color: {COLORS['accent_primary']};
+    /* Có thể dùng image checkmark ở đây nếu có file svg */
+}}
+"""
+
+# ======================================================================
+# HELPER FUNCTIONS
 # ======================================================================
 def _ass_to_rgb(ass_str):
     if not ass_str or not isinstance(ass_str, str) or not str(ass_str).strip().upper().startswith("&H"):
@@ -69,31 +376,268 @@ def _ass_to_rgba_list(ass_str):
     except: pass
     return [255, 255, 0, 255]
 
+
 # ======================================================================
-# CLASS TÙY CHỈNH (SLIDER NHẤP NHẢ & WORKER ĐÓNG BĂNG)
+# CUSTOM WIDGETS
 # ======================================================================
+
 class ClickableSlider(QSlider):
     def mousePressEvent(self, ev):
         if ev.button() == Qt.MouseButton.LeftButton:
-            # Nhảy tức thì đến vị trí click chuột
             val = self.minimum() + ((self.maximum() - self.minimum()) * ev.pos().x()) / self.width()
             self.setValue(int(val))
             self.sliderMoved.emit(int(val))
-            ev.accept() # Chặn event mặc định của QSlider
+            ev.accept()
         else:
             super().mousePressEvent(ev)
-            
+
+
+class StatusBadge(QLabel):
+    """Inline pill-shaped status indicator"""
+    def __init__(self, text="", color=COLORS['accent_cyan'], parent=None):
+        super().__init__(text, parent)
+        self._color = color
+        self.setFixedHeight(22)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._update_style()
+
+    def _update_style(self):
+        self.setStyleSheet(f"""
+            QLabel {{
+                background-color: {self._color}20;
+                color: {self._color};
+                border: 1px solid {self._color}60;
+                border-radius: 11px;
+                padding: 0px 10px;
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 0.5px;
+            }}
+        """)
+
+    def set_state(self, text, color):
+        self._color = color
+        self.setText(text)
+        self._update_style()
+
+
+class IconButton(QPushButton):
+    """Compact icon-style button with hover glow"""
+    def __init__(self, text="", accent=COLORS['accent_primary'], parent=None):
+        super().__init__(text, parent)
+        self._accent = accent
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._base_style()
+
+    def _base_style(self):
+        self.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['bg_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border_normal']};
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background-color: {self._accent}15;  /* Sáng màu accent nhẹ nhàng */
+                color: {self._accent};
+                border-color: {self._accent}80;
+            }}
+            QPushButton:pressed {{
+                background-color: {self._accent}30;
+            }}
+        """)
+
+
+class PrimaryButton(QPushButton):
+    """Main CTA button with solid gradients"""
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setMinimumHeight(48) # Cao to rõ ràng
+        self._set_state("idle")
+
+    def _set_state(self, state):
+        if state == "idle":
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {COLORS['accent_primary']}, stop:1 {COLORS['accent_secondary']});
+                    color: {COLORS['bg_base']};
+                    border: none;
+                    border-radius: 8px;
+                    font-size: 15px;
+                    font-weight: 800;
+                    letter-spacing: 1px;
+                }}
+                QPushButton:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1EE3FF, stop:1 #33FFAB);
+                }}
+                QPushButton:disabled {{
+                    background: {COLORS['bg_elevated']};
+                    color: {COLORS['text_muted']};
+                    border: 1px solid {COLORS['border_normal']};
+                }}
+            """)
+        elif state == "running":
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {COLORS['bg_active']};
+                    color: {COLORS['accent_amber']};
+                    border: 1px solid {COLORS['accent_amber']};
+                    border-radius: 8px;
+                    font-size: 14px;
+                    font-weight: 700;
+                }}
+                QPushButton:disabled {{ 
+                    background-color: {COLORS['bg_elevated']}; 
+                    color: {COLORS['accent_amber']}; 
+                    border: 1px solid {COLORS['accent_amber']}50;
+                }}
+            """)
+        elif state == "confirm_roi":
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {COLORS['accent_primary']};
+                    color: {COLORS['bg_base']};
+                    border: none;
+                    border-radius: 8px;
+                    font-size: 14px;
+                    font-weight: 800;
+                }}
+                QPushButton:hover {{ background-color: #1EE3FF; }}
+            """)
+        elif state == "confirm_sub":
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {COLORS['accent_amber']};
+                    color: {COLORS['bg_base']};
+                    border: none;
+                    border-radius: 8px;
+                    font-size: 14px;
+                    font-weight: 800;
+                }}
+                QPushButton:hover {{ background-color: #FFC933; }}
+            """)
+
+
+class SectionLabel(QLabel):
+    """Subtle uppercase section header"""
+    def __init__(self, text="", parent=None):
+        super().__init__(text.upper(), parent)
+        self.setStyleSheet(f"""
+            QLabel {{
+                color: {COLORS['text_muted']};
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 1.5px;
+                padding: 0px 0px 6px 0px;
+            }}
+        """)
+
+
+class Divider(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFrameShape(QFrame.Shape.HLine)
+        self.setFixedHeight(1)
+        self.setStyleSheet(f"background-color: {COLORS['border_subtle']}; border: none;")
+
+
+class StepCheckBox(QCheckBox):
+    """Step toggle with accent styling"""
+    def __init__(self, icon, label, parent=None):
+        super().__init__(f"  {icon}  {label}", parent)
+        self.setChecked(True)
+        self.setStyleSheet(f"""
+            QCheckBox {{
+                color: {COLORS['text_secondary']};
+                spacing: 6px;
+                font-size: 13px;
+                padding: 5px 8px;
+                border-radius: 6px;
+            }}
+            QCheckBox:hover {{
+                background-color: {COLORS['bg_hover']};
+                color: {COLORS['text_primary']};
+            }}
+            QCheckBox::indicator {{
+                width: 16px;
+                height: 16px;
+                border-radius: 4px;
+                border: 1.5px solid {COLORS['border_normal']};
+                background-color: transparent;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {COLORS['accent_cyan']};
+                border-color: {COLORS['accent_cyan']};
+            }}
+        """)
+
+
+class GlowCard(QWidget):
+    """Borderless card with subtle inner glow"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"""
+            GlowCard {{
+                background-color: {COLORS['bg_surface']};
+                border: 1px solid {COLORS['border_subtle']};
+                border-radius: 10px;
+            }}
+        """)
+
+
+class ConsoleOutput(QTextEdit):
+    """Styled terminal-like log output"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setReadOnly(True)
+        self.setFont(QFont("JetBrains Mono, Consolas", 11))
+        self.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {COLORS['bg_base']};
+                color: #A8B8CC;
+                border: 1px solid {COLORS['border_subtle']};
+                border-radius: 8px;
+                padding: 8px 10px;
+                selection-background-color: {COLORS['accent_cyan']}40;
+            }}
+        """)
+
+    def log(self, text):
+        # Color-code by prefix
+        if "✅" in text or "hoàn tất" in text.lower():
+            colored = f'<span style="color:{COLORS["status_ok"]}">{text}</span>'
+        elif "❌" in text or "lỗi" in text.lower():
+            colored = f'<span style="color:{COLORS["status_err"]}">{text}</span>'
+        elif "⚠️" in text:
+            colored = f'<span style="color:{COLORS["status_warn"]}">{text}</span>'
+        elif "🚀" in text or "▶" in text:
+            colored = f'<span style="color:{COLORS["accent_cyan"]}">{text}</span>'
+        elif text.startswith("💾"):
+            colored = f'<span style="color:{COLORS["accent_purple"]}">{text}</span>'
+        else:
+            colored = f'<span style="color:#8B9DB5">{text}</span>'
+        self.append(colored)
+        self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+
+
 class GUILogSink:
     def __init__(self, signal):
         self.signal = signal
     def write(self, message):
         self.signal.emit(message.strip())
 
+
+# ======================================================================
+# PIPELINE WORKER (unchanged logic)
+# ======================================================================
 class PipelineWorker(QThread):
     progress_sig = pyqtSignal(int, int, str)
     log_sig = pyqtSignal(str)
     pause_for_sub_sig = pyqtSignal()
-    request_roi_sig = pyqtSignal(str) # Thêm tín hiệu này
+    request_roi_sig = pyqtSignal(str)
     finished_sig = pyqtSignal()
 
     def __init__(self, app_state):
@@ -109,9 +653,9 @@ class PipelineWorker(QThread):
             self.progress_sig.emit(completed, total, curr_text)
             if completed == 4 and self.state['chk_pause']:
                 self.log_sig.emit("⏳ Tạm dừng nội bộ tại Bước 4. Chờ nạp Sub...")
-                self.state['pause_event'].clear() 
-                self.pause_for_sub_sig.emit()     
-                self.state['pause_event'].wait()  
+                self.state['pause_event'].clear()
+                self.pause_for_sub_sig.emit()
+                self.state['pause_event'].wait()
 
         try:
             if not ProEngine:
@@ -119,41 +663,29 @@ class PipelineWorker(QThread):
                 return
 
             engine = ProEngine()
-            engine.cfg = ConfigLoader.load() 
-            
-            # =========================================================
-            # LÁCH LUẬT PYDANTIC: Ép gán thẳng vào bộ nhớ __dict__
-            # =========================================================
+            engine.cfg = ConfigLoader.load()
             engine.cfg.pipeline.__dict__['run_s1'] = self.state['steps']['s1']
             engine.cfg.pipeline.__dict__['run_s2'] = self.state['steps']['s2']
             engine.cfg.pipeline.__dict__['run_s3'] = self.state['steps']['s3']
             engine.cfg.pipeline.__dict__['run_s4'] = self.state['steps']['s4']
             engine.cfg.pipeline.__dict__['run_s5'] = self.state['steps']['s5']
             engine.cfg.pipeline.__dict__['run_s6'] = self.state['steps']['s6']
-            # =========================================================
 
-            # --- HOOK: Bắt cóc luồng của Engine ---
             original_process_one = engine.process_one
-            
+
             def hooked_process_one(video_path):
-                # 1. Báo cho giao diện mở Video lên (và cập nhật tên video)
                 self.request_roi_sig.emit(str(video_path))
-                
-                # 2. KHÓA LUỒNG NGAY TẠI ĐÂY (Nếu checkbox ROI được tích)
                 if self.state['chk_pause_roi']:
-                    self.state['pause_roi_event'].clear() 
-                    self.state['pause_roi_event'].wait()  
-                    
-                # 3. Khi event được nhả, thả cho AI xử lý tiếp
-                original_process_one(video_path)           
-                
+                    self.state['pause_roi_event'].clear()
+                    self.state['pause_roi_event'].wait()
+                original_process_one(video_path)
+
             engine.process_one = hooked_process_one
-            # ----------------------------------------------------------------------------
 
             self.log_sig.emit("🚀 Bắt đầu chạy Pipeline...")
             engine.run(on_progress=on_progress)
             self.log_sig.emit(f"✅ Tiến trình hoàn tất toàn bộ!")
-            
+
         except Exception as e:
             logger.exception("Pipeline Error")
             self.log_sig.emit(f"❌ Lỗi Pipeline: {str(e)}")
@@ -161,280 +693,446 @@ class PipelineWorker(QThread):
             logger.remove(handler_id)
             self.finished_sig.emit()
 
+class CapCutStyleColorDialog(QDialog):
+    """Color Picker kiểu CapCut - Tab Gợi ý mặc định, Tab Tùy chỉnh tự mở bảng màu"""
+
+    PRESETS = [
+        ("Đen huyền bí", [0, 0, 0], 190),
+        ("Đen nhẹ", [15, 15, 25], 170),
+        ("Xám sang trọng", [35, 35, 45], 200),
+        ("Trắng tinh khiết", [255, 255, 255], 255),
+        ("Vàng gold", [255, 215, 0], 255),
+        ("Cam nổi bật", [255, 140, 0], 255),
+        ("Xanh dương tech", [0, 200, 255], 255),
+        ("Xanh lá tươi", [50, 255, 140], 255),
+        ("Hồng thanh lịch", [255, 80, 120], 255),
+        ("Tím huyền bí", [180, 90, 255], 255),
+        ("Đỏ năng lượng", [255, 60, 80], 255),
+    ]
+
+    def __init__(self, parent=None, target="pill"):
+        super().__init__(parent)
+        self.setWindowTitle("🎨 Chọn màu phụ đề")
+        self.resize(720, 580)
+        self.target = target
+
+        # Load giá trị hiện tại
+        if target == "text" and hasattr(parent, 'step5_text_rgb'):
+            rgb_list = parent.step5_text_rgb
+        elif target == "outline" and hasattr(parent, 'step5_out_rgb'):
+            rgb_list = parent.step5_out_rgb
+        else:
+            rgb_list = getattr(parent, 'step5_pill_rgb', [0, 0, 0, 190])
+
+        self.current_rgb = list(rgb_list[:3])
+        self.current_alpha = rgb_list[3] if len(rgb_list) > 3 else (190 if target == "pill" else 255)
+
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        # Preview
+        self.preview = QLabel()
+        self.preview.setFixedHeight(110)
+        self.preview.setStyleSheet("border-radius: 12px; border: 3px solid #333;")
+        layout.addWidget(self.preview)
+        self._update_preview()
+
+        # Tabs
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
+        # Tab 1: Gợi ý màu (mặc định)
+        tab_preset = QWidget()
+        p_layout = QVBoxLayout(tab_preset)
+        p_layout.setSpacing(16)
+
+        lbl = QLabel("🌟 Màu gợi ý phổ biến cho phụ đề")
+        lbl.setStyleSheet("font-size: 15px; font-weight: 600; color: #00D4FF;")
+        p_layout.addWidget(lbl)
+
+        grid = QGridLayout()
+        grid.setSpacing(12)
+        for i, (name, rgb, alpha) in enumerate(self.PRESETS):
+            btn = QPushButton(name)
+            btn.setFixedHeight(52)
+            btn.setStyleSheet(f"""
+                background-color: rgba({rgb[0]},{rgb[1]},{rgb[2]},{alpha});
+                color: white;
+                font-weight: 600;
+                border-radius: 8px;
+                border: 2px solid transparent;
+            """)
+            btn.clicked.connect(lambda _, r=rgb, a=alpha: self._select_preset(r, a))
+            grid.addWidget(btn, i // 3, i % 3)
+        p_layout.addLayout(grid)
+        self.tabs.addTab(tab_preset, "🌟 Gợi ý màu")
+
+        # Tab 2: Tùy chỉnh nâng cao - Tự động mở bảng màu khi chuyển tab
+        tab_custom = QWidget()
+        c_layout = QVBoxLayout(tab_custom)
+        c_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        c_layout.setSpacing(40)
+
+        lbl_custom = QLabel("⚙ Tùy chỉnh nâng cao")
+        lbl_custom.setStyleSheet("font-size: 17px; font-weight: 600; color: #FFFFFF;")
+        c_layout.addWidget(lbl_custom)
+
+        lbl_sub = QLabel("Bảng màu chi tiết sẽ tự động mở...")
+        lbl_sub.setStyleSheet("color: #888; font-size: 13px;")
+        c_layout.addWidget(lbl_sub)
+
+        self.tabs.addTab(tab_custom, "⚙ Tùy chỉnh nâng cao")
+
+        layout.addWidget(self.tabs, stretch=1)
+
+        # Nút hành động
+        btn_layout = QHBoxLayout()
+        cancel_btn = QPushButton("Hủy")
+        ok_btn = QPushButton("✓ Áp dụng màu")
+        ok_btn.setStyleSheet("background: #00C853; color: black; font-weight: bold; padding: 12px;")
+
+        cancel_btn.clicked.connect(self.reject)
+        ok_btn.clicked.connect(self.accept)
+
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addWidget(ok_btn)
+        layout.addLayout(btn_layout)
+
+        # Mặc định mở tab Gợi ý
+        self.tabs.setCurrentIndex(0)
+
+    def _update_preview(self):
+        color = f"rgba({self.current_rgb[0]}, {self.current_rgb[1]}, {self.current_rgb[2]}, {self.current_alpha})"
+        self.preview.setStyleSheet(f"background-color: {color}; border-radius: 12px;")
+
+    def _select_preset(self, rgb, alpha):
+        self.current_rgb = list(rgb)
+        self.current_alpha = alpha
+        self._update_preview()
+
+    def _open_qt_color_dialog(self):
+        """Mở bảng màu Qt đầy đủ"""
+        initial = QColor(*self.current_rgb)
+        color = QColorDialog.getColor(initial, self, "Chọn màu chi tiết", 
+                                      QColorDialog.ColorDialogOption.ShowAlphaChannel)
+        
+        if color.isValid():
+            self.current_rgb = [color.red(), color.green(), color.blue()]
+            self.current_alpha = color.alpha()
+            self._update_preview()
+
+    def _on_tab_changed(self, index):
+        """Khi chuyển sang tab Tùy chỉnh nâng cao → tự động mở bảng màu Qt"""
+        if index == 1:   # Tab thứ 2 là "Tùy chỉnh nâng cao"
+            QTimer.singleShot(80, self._open_qt_color_dialog)   # delay nhỏ để tab render xong
+
+    def get_rgb(self):
+        return tuple(self.current_rgb)
+
+    def get_alpha(self):
+        return self.current_alpha
 # ======================================================================
-# CỬA SỔ SETTING (CONFIG WINDOW) - BẢN PRO UI/UX
+# CONFIG WINDOW — REDESIGNED
 # ======================================================================
 class ConfigWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
-        self.setWindowTitle("⚙️ Cài đặt - Studio Master")
-        self.resize(720, 560)
-        self.setMinimumSize(680, 520)
+        self.setWindowTitle("Studio Settings")
+        self.resize(760, 600)
+        self.setMinimumSize(720, 560)
 
         self.cfg = parent.cfg
         self.registry = LanguageRegistry()
-
-        # Giữ màu để paint lại
         self.step5_text_rgb = parent.step5_text_rgb
         self.step5_out_rgb = parent.step5_out_rgb
         self.step5_pill_rgb = parent.step5_pill_rgb
 
+        self.setStyleSheet(GLOBAL_QSS + f"""
+            QDialog {{
+                background-color: {COLORS['bg_surface']};
+            }}
+        """)
+
         self._setup_ui()
-        self._apply_styles()
-        
-    def _browse_font(self):
-        from PyQt6.QtWidgets import QFileDialog
-        initial_dir = str(Path(self.le_font_path.text()).parent) if self.le_font_path.text() else "C:/Windows/Fonts"
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Chọn file Font", initial_dir, "Font Files (*.ttf *.otf);;All Files (*.*)"
-        )
-        if file_path: 
-            self.le_font_path.setText(file_path)
-        
-    def _browse_ffmpeg(self):
-        from PyQt6.QtWidgets import QFileDialog
-        initial_dir = str(Path(self.le_ffmpeg.text()).parent) if self.le_ffmpeg.text() else ""
-        file_path, _ = QFileDialog.getOpenFileName(self, "Chọn file ffmpeg.exe", initial_dir, "FFmpeg Executable (ffmpeg.exe);;All Files (*.*)")
-        if file_path: self.le_ffmpeg.setText(file_path)
-        
-    def _browse_bg_music(self):
-        from PyQt6.QtWidgets import QFileDialog
-        initial_dir = self.le_bg_music.text() or ""
-        dir_path = QFileDialog.getExistingDirectory(self, "Chọn thư mục nhạc nền ngẫu nhiên", initial_dir)
-        if dir_path: self.le_bg_music.setText(dir_path)
-        
-    def _update_edge_voices(self, edge_prefix: str):
-        """Cập nhật ComboBox voice của Edge"""
-        if not hasattr(self, 'cb_edge_voice'):
-            return
-
-        # Chạy async trong thread để không freeze GUI
-        def load_voices():
-            voices = asyncio.run(get_edge_voices_for_language(edge_prefix))
-            self.cb_edge_voice.clear()
-            for v in voices:
-                self.cb_edge_voice.addItem(v["name"], v["id"])
-            
-            # Chọn voice mặc định nếu có
-            if voices:
-                self.cb_edge_voice.setCurrentIndex(0)
-
-        # Chạy trong thread
-        threading.Thread(target=load_voices, daemon=True).start()
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(12, 12, 12, 12)
-        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(20, 20, 20, 16)
+        main_layout.setSpacing(16)
 
+        # Header
+        hdr = QHBoxLayout()
+        title = QLabel("⚙  Studio Settings")
+        title.setStyleSheet(f"""
+            font-size: 18px;
+            font-weight: 700;
+            color: {COLORS['text_primary']};
+            letter-spacing: -0.3px;
+        """)
+        hdr.addWidget(title)
+        hdr.addStretch()
+        sub = QLabel(f"v{__version__}")
+        sub.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+        hdr.addWidget(sub)
+        main_layout.addLayout(hdr)
+        main_layout.addWidget(Divider())
+
+        # Tabs
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
 
-        # Tab 1: Ngôn ngữ & Hệ thống
+        # ── TAB 1: AI & System ──
         tab_ai = QWidget()
         lay_ai = QFormLayout(tab_ai)
-        lay_ai.setSpacing(12)
+        lay_ai.setSpacing(14)
+        lay_ai.setContentsMargins(16, 16, 16, 16)
+        lay_ai.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         # FFmpeg
-        h_ffmpeg = QHBoxLayout()
+        h_ff = QHBoxLayout(); h_ff.setSpacing(8)
         self.le_ffmpeg = QLineEdit(self.cfg.ffmpeg_bin or "")
-        btn_ffmpeg = QPushButton("📁")
-        btn_ffmpeg.setFixedWidth(50)
-        btn_ffmpeg.clicked.connect(self._browse_ffmpeg)
-        h_ffmpeg.addWidget(self.le_ffmpeg)
-        h_ffmpeg.addWidget(btn_ffmpeg)
-        lay_ai.addRow("FFmpeg Path:", h_ffmpeg)
+        self.le_ffmpeg.setPlaceholderText("Đường dẫn đến ffmpeg.exe...")
+        btn_ff = IconButton("📁 Browse")
+        btn_ff.setFixedWidth(90)
+        btn_ff.clicked.connect(self._browse_ffmpeg)
+        h_ff.addWidget(self.le_ffmpeg); h_ff.addWidget(btn_ff)
+        lay_ai.addRow(self._lbl("FFmpeg Binary"), h_ff)
 
-        # Source & Target
+        # Languages
         self.cb_source = QComboBox()
         self.cb_target = QComboBox()
         for code, name in self.registry.get_all():
             self.cb_source.addItem(name, code)
             self.cb_target.addItem(name, code)
-
         source_code = getattr(self.cfg, 'source_lang', 'zh')
         target_code = getattr(self.cfg, 'target_lang', 'vi')
-
         self.cb_source.setCurrentIndex(self.cb_source.findData(source_code))
         self.cb_target.setCurrentIndex(self.cb_target.findData(target_code))
-
         self.cb_source.currentIndexChanged.connect(self._on_language_changed)
         self.cb_target.currentIndexChanged.connect(self._on_language_changed)
-
-        lay_ai.addRow("Ngôn ngữ nguồn:", self.cb_source)
-        lay_ai.addRow("Ngôn ngữ đích:", self.cb_target)
+        lay_ai.addRow(self._lbl("Ngôn ngữ nguồn"), self.cb_source)
+        lay_ai.addRow(self._lbl("Ngôn ngữ đích"), self.cb_target)
 
         # Gemini
         self.le_s4_model = QLineEdit(getattr(self.cfg.step4, "model_name", "gemini-2.5-flash"))
-        lay_ai.addRow("Model Gemini:", self.le_s4_model)
+        lay_ai.addRow(self._lbl("Model Gemini"), self.le_s4_model)
 
         self.txt_s4_keys = QTextEdit()
-        self.txt_s4_keys.setMaximumHeight(90)
+        self.txt_s4_keys.setMaximumHeight(88)
         self.txt_s4_keys.setPlaceholderText("Mỗi API Key một dòng...")
         keys = getattr(self.cfg.step4, "gemini_api_keys", [])
         self.txt_s4_keys.setPlainText("\n".join(keys))
-        lay_ai.addRow("Gemini API Keys:", self.txt_s4_keys)
+        lay_ai.addRow(self._lbl("Gemini API Keys"), self.txt_s4_keys)
 
-        self.tabs.addTab(tab_ai, "🤖 Hệ thống & Dịch")
-
-        # --- TAB 2: DÒ SUB (OCR & WHISPER) ---
+        # ── TAB 2: OCR & Whisper ──
         tab_sub = QWidget()
         lay_sub = QFormLayout(tab_sub)
-        lay_sub.setSpacing(15)
+        lay_sub.setSpacing(14)
+        lay_sub.setContentsMargins(16, 16, 16, 16)
         lay_sub.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         self.cb_s3_src = QComboBox()
         self.cb_s3_src.addItems(["voice", "image"])
         self.cb_s3_src.setCurrentText(getattr(self.cfg.step3, "srt_source", "voice"))
-        lay_sub.addRow("Nguồn tách Sub:", self.cb_s3_src)
+        lay_sub.addRow(self._lbl("Nguồn tách Sub"), self.cb_s3_src)
 
         self.le_s3_lang = QLineEdit(getattr(self.cfg.step3, "language", "zh"))
         self.le_s3_lang.setReadOnly(True)
-        self.le_s3_lang.setStyleSheet("background-color: #1e1e1e; color: #7f8c8d; border: 1px dashed #555;")
-        self.le_s3_lang.setToolTip("Giá trị này được đồng bộ tự động từ Ngôn ngữ nguồn")
-        lay_sub.addRow("Ngôn ngữ Video gốc:", self.le_s3_lang)
+        self.le_s3_lang.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {COLORS['bg_base']};
+                color: {COLORS['text_muted']};
+                border: 1px dashed {COLORS['border_normal']};
+                border-radius: 6px;
+                padding: 7px 10px;
+            }}
+        """)
+        self.le_s3_lang.setToolTip("Tự động đồng bộ từ Ngôn ngữ nguồn")
+        lay_sub.addRow(self._lbl("Ngôn ngữ Video gốc"), self.le_s3_lang)
 
         self.le_s3_frames = QLineEdit(str(getattr(self.cfg.step3, "image_step_frames", 10)))
-        lay_sub.addRow("Bỏ qua khung hình (Frames):", self.le_s3_frames)
+        lay_sub.addRow(self._lbl("Bỏ qua (Frames)"), self.le_s3_frames)
 
-        # --- TAB 3: TRANG TRÍ PHỤ ĐỀ (MÀU SẮC) ---
+        # ── TAB 3: Color / ASS ──
         tab_color = QWidget()
         lay_color = QFormLayout(tab_color)
-        lay_color.setSpacing(20)
-        lay_color.setContentsMargins(20, 20, 20, 20)
+        lay_color.setSpacing(16)
+        lay_color.setContentsMargins(16, 16, 16, 16)
 
-        font_box = QHBoxLayout()
+        # Font
+        font_box = QHBoxLayout(); font_box.setSpacing(8)
         self.le_font_path = QLineEdit(getattr(self.cfg.step5, "font_path", ""))
-        self.le_font_path.setPlaceholderText("Để trống sẽ dùng font mặc định...")
-        btn_font = QPushButton("🔤 Chọn Font (.ttf/.otf)")
+        self.le_font_path.setPlaceholderText("Để trống dùng font mặc định...")
+        btn_font = IconButton("🔤 Chọn Font")
         btn_font.clicked.connect(self._browse_font)
-        font_box.addWidget(self.le_font_path)
-        font_box.addWidget(btn_font)
-        lay_color.addRow("Font chữ Subtitle:", font_box)
+        font_box.addWidget(self.le_font_path); font_box.addWidget(btn_font)
+        lay_color.addRow(self._lbl("Font Subtitle"), font_box)
 
-        def create_color_picker(target, rgb):
+        def color_row(target, rgb_list):
+            """rgb_list có thể là list 3 hoặc 4 phần tử (R,G,B[,A])"""
+            # Chỉ lấy 3 giá trị RGB để hiển thị swatch
+            rgb = rgb_list[:3] if isinstance(rgb_list, (list, tuple)) else [255, 255, 255]
+            
             h = QHBoxLayout()
-            lbl_ref = QLabel()
-            lbl_ref.setFixedSize(50, 30)
-            lbl_ref.setStyleSheet(f"background-color: {_rgb_hex(*rgb)}; border: 1px solid #7f8c8d; border-radius: 6px;")
-            btn = QPushButton(f"🎨 Đổi Màu")
+            h.setSpacing(10)
+            
+            swatch = QLabel()
+            swatch.setFixedSize(36, 28)
+            swatch.setStyleSheet(f"""
+                background-color: {_rgb_hex(*rgb)};
+                border: 1px solid {COLORS['border_normal']};
+                border-radius: 6px;
+            """)
+            
+            btn = IconButton("✏ Đổi màu")
             btn.setFixedWidth(100)
-            btn.clicked.connect(lambda: self._pick_color(target, lbl_ref))
-            h.addWidget(lbl_ref)
+            btn.clicked.connect(lambda: self._pick_color(target, swatch))
+            
+            h.addWidget(swatch)
             h.addWidget(btn)
             h.addStretch()
             return h
 
-        lay_color.addRow("Chữ chính (Text):", create_color_picker("text", self.step5_text_rgb))
-        lay_color.addRow("Viền chữ (Outline):", create_color_picker("outline", self.step5_out_rgb))
-        lay_color.addRow("Nền bo góc (Pill Box):", create_color_picker("pill", self.step5_pill_rgb))
+        lay_color.addRow(self._lbl("Màu chữ chính"), color_row("text", self.step5_text_rgb[:3]))
+        lay_color.addRow(self._lbl("Viền chữ"), color_row("outline", self.step5_out_rgb[:3]))
+        lay_color.addRow(self._lbl("Nền Pill Box"), color_row("pill", self.step5_pill_rgb[:3]))
 
-        # --- TAB 4: ÂM THANH & TTS ---
+        # ── TAB 4: Audio / TTS ──
         tab_audio = QWidget()
         lay_audio = QFormLayout(tab_audio)
-        lay_audio.setSpacing(15)
+        lay_audio.setSpacing(14)
+        lay_audio.setContentsMargins(16, 16, 16, 16)
         lay_audio.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         self.cb_s6_engine = QComboBox()
         self.cb_s6_engine.addItems(["qwen", "edge", "google"])
         self.cb_s6_engine.setCurrentText(getattr(self.cfg.step6, "tts_engine", "qwen").lower())
         self.cb_s6_engine.currentTextChanged.connect(self._toggle_dynamic_ui)
-        lay_audio.addRow("Engine Đọc thoại:", self.cb_s6_engine)
+        lay_audio.addRow(self._lbl("TTS Engine"), self.cb_s6_engine)
 
-        # Qwen Voice
         self.w_qwen_voice = QWidget()
-        lay_qwen = QHBoxLayout(self.w_qwen_voice)
-        lay_qwen.setContentsMargins(0,0,0,0)
+        lq = QHBoxLayout(self.w_qwen_voice); lq.setContentsMargins(0,0,0,0)
         self.cb_qwen_voice = QComboBox()
-
         json_path = Path("gwen-tts/data/ref_info.json")
         if json_path.exists():
             try:
                 with open(json_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    for key, val in data.items():
-                        display_name = val.get("name", key)
-                        self.cb_qwen_voice.addItem(display_name, userData=key)
-            except:
-                pass
-
+                    for key, val in json.load(f).items():
+                        self.cb_qwen_voice.addItem(val.get("name", key), userData=key)
+            except: pass
         if self.cb_qwen_voice.count() == 0:
             self.cb_qwen_voice.addItem("Ái Vy", userData="ai_vy")
-
-        curr_qwen = getattr(self.cfg.step6, "qwen_voice", "ai_vy")
-        idx = self.cb_qwen_voice.findData(curr_qwen)
-        if idx >= 0:
-            self.cb_qwen_voice.setCurrentIndex(idx)
-
-        lay_qwen.addWidget(self.cb_qwen_voice)
-        self.lbl_qwen_voice = QLabel("Giọng (Qwen TTS):")
+        idx = self.cb_qwen_voice.findData(getattr(self.cfg.step6, "qwen_voice", "ai_vy"))
+        if idx >= 0: self.cb_qwen_voice.setCurrentIndex(idx)
+        lq.addWidget(self.cb_qwen_voice)
+        self.lbl_qwen_voice = self._lbl("Giọng Qwen TTS")
         lay_audio.addRow(self.lbl_qwen_voice, self.w_qwen_voice)
 
-        # Edge Voice
         self.w_edge_voice = QWidget()
-        lay_edge = QHBoxLayout(self.w_edge_voice)
-        lay_edge.setContentsMargins(0,0,0,0)
+        le = QHBoxLayout(self.w_edge_voice); le.setContentsMargins(0,0,0,0)
         self.cb_edge_voice = QComboBox()
-        lay_edge.addWidget(self.cb_edge_voice)
-        self.lbl_edge_voice = QLabel("Giọng (Edge TTS):")
+        le.addWidget(self.cb_edge_voice)
+        self.lbl_edge_voice = self._lbl("Giọng Edge TTS")
         lay_audio.addRow(self.lbl_edge_voice, self.w_edge_voice)
 
-        # Mode Mix
         self.cb_s6_mode = QComboBox()
-        self.cb_s6_mode.addItems(["1 - Giữ toàn bộ âm gốc", "2 - Thay âm thanh mới"])
+        self.cb_s6_mode.addItems(["Mode 1 — Giữ toàn bộ âm gốc", "Mode 2 — Thay âm thanh mới"])
         self.cb_s6_mode.setCurrentIndex(0 if str(getattr(self.cfg.step6, "audio_mode", 1)) == "1" else 1)
         self.cb_s6_mode.currentIndexChanged.connect(self._toggle_dynamic_ui)
-        lay_audio.addRow("Chế độ Mix Video:", self.cb_s6_mode)
+        lay_audio.addRow(self._lbl("Chế độ Mix"), self.cb_s6_mode)
 
-        # Thư mục nhạc nền
         self.w_bgm = QWidget()
-        lay_bgm = QHBoxLayout(self.w_bgm)
-        lay_bgm.setContentsMargins(0,0,0,0)
+        lb = QHBoxLayout(self.w_bgm); lb.setContentsMargins(0,0,0,0); lb.setSpacing(8)
         self.le_bg_music = QLineEdit(getattr(self.cfg.step6, "random_bgm_dir", ""))
-        self.le_bg_music.setPlaceholderText("Ví dụ: D:\\NhacNen")
-        btn_bgm = QPushButton("📁 Browse")
-        btn_bgm.setFixedWidth(80)
+        self.le_bg_music.setPlaceholderText("Thư mục nhạc nền ngẫu nhiên...")
+        btn_bgm = IconButton("📁 Browse")
+        btn_bgm.setFixedWidth(90)
         btn_bgm.clicked.connect(self._browse_bg_music)
-        lay_bgm.addWidget(self.le_bg_music)
-        lay_bgm.addWidget(btn_bgm)
-        self.lbl_bgm = QLabel("Thư mục Nhạc ngẫu nhiên:")
+        lb.addWidget(self.le_bg_music); lb.addWidget(btn_bgm)
+        self.lbl_bgm = self._lbl("Thư mục Nhạc nền")
         lay_audio.addRow(self.lbl_bgm, self.w_bgm)
 
-        # Các thông số số
-        h_params = QHBoxLayout()
-        v1 = QVBoxLayout(); v1.addWidget(QLabel("Vol Đọc (TTS)")); self.le_s6_vol = QLineEdit(str(getattr(self.cfg.step6, "tts_volume", 1.4))); v1.addWidget(self.le_s6_vol)
-        v2 = QVBoxLayout(); v2.addWidget(QLabel("Vol Nhạc nền (BGM)")); self.le_s6_bg_vol = QLineEdit(str(getattr(self.cfg.step6, "music_volume", 0.2))); v2.addWidget(self.le_s6_bg_vol)
-        v_extra = QVBoxLayout(); v_extra.addWidget(QLabel("Vol gốc")); self.le_s6_extra = QLineEdit(str(getattr(self.cfg.step6, "extra_voice_volume", 0.1))); v_extra.addWidget(self.le_s6_extra)
-        v3 = QVBoxLayout(); v3.addWidget(QLabel("Dãn thời gian (Stretch)")); self.le_s6_sp = QLineEdit(str(getattr(self.cfg.step6, "stretch_ratio", 1.1))); v3.addWidget(self.le_s6_sp)
-        v4 = QVBoxLayout(); v4.addWidget(QLabel("Cao độ giọng (Pitch)")); self.le_s6_pitch = QLineEdit(str(getattr(self.cfg.step6, "pitch_factor", 1.2))); v4.addWidget(self.le_s6_pitch)
-        v5 = QVBoxLayout(); v5.addWidget(QLabel("Tốc độ khi đoạn thoại ngắn")); self.le_s6_speed = QLineEdit(str(getattr(self.cfg.step6, "speedup_when_short", 1.5))); v5.addWidget(self.le_s6_speed)
+        # Audio params grid
+        params_widget = QWidget()
+        params_grid = QGridLayout(params_widget)
+        params_grid.setSpacing(10)
+        params_grid.setContentsMargins(0, 8, 0, 0)
 
-        h_params.addLayout(v1)
-        h_params.addLayout(v2)
-        h_params.addLayout(v_extra)
-        h_params.addLayout(v3)
-        h_params.addLayout(v4)
-        h_params.addLayout(v5)
-        lay_audio.addRow(h_params)
+        param_defs = [
+            ("Vol TTS", "le_s6_vol", "tts_volume", 1.4),
+            ("Vol BGM", "le_s6_bg_vol", "music_volume", 0.2),
+            ("Vol gốc", "le_s6_extra", "extra_voice_volume", 0.1),
+            ("Stretch", "le_s6_sp", "stretch_ratio", 1.1),
+            ("Pitch", "le_s6_pitch", "pitch_factor", 1.2),
+            ("Speed", "le_s6_speed", "speedup_when_short", 1.5),
+        ]
+        for i, (label, attr, cfg_key, default) in enumerate(param_defs):
+            col = i % 3
+            row = (i // 3) * 2
+            lbl = QLabel(label)
+            lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px; font-weight: 600; letter-spacing: 0.5px;")
+            le = QLineEdit(str(getattr(self.cfg.step6, cfg_key, default)))
+            le.setFixedHeight(32)
+            params_grid.addWidget(lbl, row, col)
+            params_grid.addWidget(le, row + 1, col)
+            setattr(self, attr, le)
 
-        # ==================== THÊM TẤT CẢ TAB VÀO ====================
-        self.tabs.addTab(tab_ai, "🤖 AI & Hệ thống")
-        self.tabs.addTab(tab_sub, "🔎 Quét Phụ đề")
-        self.tabs.addTab(tab_color, "🎨 Chỉnh Màu ASS")
-        self.tabs.addTab(tab_audio, "🎧 Âm thanh & TTS")
+        lay_audio.addRow(params_widget)
 
-        main_layout.addWidget(self.tabs)
+        # Add tabs
+        self.tabs.addTab(tab_ai,    "🤖  AI & Hệ thống")
+        self.tabs.addTab(tab_sub,   "🔎  Quét Phụ đề")
+        self.tabs.addTab(tab_color, "🎨  Màu ASS")
+        self.tabs.addTab(tab_audio, "🎧  Âm thanh & TTS")
+        main_layout.addWidget(self.tabs, stretch=1)
 
-        # Bottom buttons
+        # Footer buttons
+        main_layout.addWidget(Divider())
         h_btn = QHBoxLayout()
-        btn_cancel = QPushButton("Hủy bỏ")
-        btn_cancel.setFixedWidth(100)
+        h_btn.setSpacing(10)
+        btn_cancel = QPushButton("Hủy")
+        btn_cancel.setFixedWidth(80)
+        btn_cancel.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {COLORS['text_secondary']};
+                border: 1px solid {COLORS['border_normal']};
+                border-radius: 6px;
+                padding: 8px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                color: {COLORS['text_primary']};
+                border-color: {COLORS['border_normal']};
+                background-color: {COLORS['bg_hover']};
+            }}
+        """)
         btn_cancel.clicked.connect(self.reject)
 
-        btn_save = QPushButton("💾 LƯU CẤU HÌNH")
-        btn_save.setObjectName("btnSave")
-        btn_save.setFixedWidth(150)
+        btn_save = QPushButton("  💾  Lưu cấu hình")
+        btn_save.setFixedWidth(160)
+        btn_save.setFixedHeight(38)
+        btn_save.setStyleSheet(f"""
+            QPushButton {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #1565C0, stop:1 #0097A7);
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: 700;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #1976D2, stop:1 #00BCD4);
+            }}
+        """)
         btn_save.clicked.connect(self._save_and_close)
 
         h_btn.addStretch()
@@ -443,191 +1141,165 @@ class ConfigWindow(QDialog):
         main_layout.addLayout(h_btn)
 
         self._toggle_dynamic_ui()
-        
+
+    def _lbl(self, text):
+        lbl = QLabel(text)
+        lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px; font-weight: 600;")
+        return lbl
+
+    def _browse_font(self):
+        initial_dir = str(Path(self.le_font_path.text()).parent) if self.le_font_path.text() else "C:/Windows/Fonts"
+        fp, _ = QFileDialog.getOpenFileName(self, "Chọn Font", initial_dir, "Font Files (*.ttf *.otf)")
+        if fp: self.le_font_path.setText(fp)
+
+    def _browse_ffmpeg(self):
+        initial_dir = str(Path(self.le_ffmpeg.text()).parent) if self.le_ffmpeg.text() else ""
+        fp, _ = QFileDialog.getOpenFileName(self, "Chọn ffmpeg.exe", initial_dir, "FFmpeg (ffmpeg.exe);;All (*.*)")
+        if fp: self.le_ffmpeg.setText(fp)
+
+    def _browse_bg_music(self):
+        d = QFileDialog.getExistingDirectory(self, "Chọn thư mục Nhạc nền", self.le_bg_music.text() or "")
+        if d: self.le_bg_music.setText(d)
+
+    def _update_edge_voices(self, edge_prefix: str):
+        if not hasattr(self, 'cb_edge_voice'): return
+        def load():
+            voices = asyncio.run(get_edge_voices_for_language(edge_prefix))
+            self.cb_edge_voice.clear()
+            for v in voices:
+                self.cb_edge_voice.addItem(v["name"], v["id"])
+            if voices: self.cb_edge_voice.setCurrentIndex(0)
+        threading.Thread(target=load, daemon=True).start()
+
     def _on_language_changed(self):
         source_code = self.cb_source.currentData()
         target_code = self.cb_target.currentData()
-        if not source_code or not target_code:
-            return
-
+        if not source_code or not target_code: return
         src = self.registry.get(source_code)
         tgt = self.registry.get(target_code)
-
         self.le_s3_lang.setText(src.whisper)
         self._update_edge_voices(tgt.edge_prefix)
 
-    def _apply_styles(self):
-        self.setStyleSheet("""
-            QDialog { background-color: #1a1a1a; color: white; font-family: 'Segoe UI', Arial;}
-            QLabel { color: #bdc3c7; font-weight: bold; font-size: 13px;}
-            QLineEdit, QTextEdit { 
-                background-color: #2b2b2b; color: #ecf0f1; 
-                border: 1px solid #3d3d3d; padding: 6px; border-radius: 4px; font-size: 13px;
-            }
-            QLineEdit:focus, QTextEdit:focus { border: 1px solid #3498db; background-color: #333;}
-            QComboBox { 
-                background-color: #2b2b2b; color: white; border: 1px solid #3d3d3d; 
-                padding: 5px; border-radius: 4px; font-size: 13px; min-height: 25px;
-            }
-            QComboBox::drop-down { border: 0px; }
-            QPushButton { 
-                background-color: #34495e; color: white; padding: 8px; 
-                border: none; border-radius: 4px; font-weight: bold; font-size: 13px;
-            }
-            QPushButton:hover { background-color: #3f546a; }
-            QPushButton#btnSave { background-color: #27ae60; font-size: 14px;}
-            QPushButton#btnSave:hover { background-color: #2ecc71; }
-            
-            /* Style cho Tab */
-            QTabWidget::pane { border: 1px solid #3d3d3d; border-radius: 6px; background-color: #222; top: -1px;}
-            QTabBar::tab { 
-                background-color: #2b2b2b; color: #7f8c8d; padding: 8px 16px; 
-                margin-right: 2px; border-top-left-radius: 4px; border-top-right-radius: 4px;
-                font-weight: bold; font-size: 13px;
-            }
-            QTabBar::tab:selected { background-color: #222; color: #3498db; border: 1px solid #3d3d3d; border-bottom-color: #222;}
-            QTabBar::tab:hover:!selected { background-color: #333; color: white;}
-        """)
-        
-    def _on_target_lang_changed(self, text):
-        """Hàm này tự động chạy khi người dùng gõ vào ô Ngôn ngữ Đích"""
-        target_lang = text.strip().lower()
-        
-        # Cắt lấy 2 chữ cái đầu để so khớp (Ví dụ: "vietnamese" hoặc "vi" đều lấy "vi")
-        lang_code = target_lang[:2] if len(target_lang) >= 2 else "vi"
-
-        self.cb_edge_voice.clear()
-
-        # Tìm danh sách giọng hợp lệ từ json
-        voices_to_add = self.edge_voice_data.get(lang_code, [])
-        
-        # Nếu không tìm thấy ngôn ngữ trùng khớp, lôi toàn bộ giọng ra cho người dùng tự chọn
-        if not voices_to_add:
-            for lang_list in self.edge_voice_data.values():
-                voices_to_add.extend(lang_list)
-        
-        # Nếu file json bị lỗi hoặc không có, fallback cứng
-        if not voices_to_add:
-            voices_to_add = [
-                {"id": "vi-VN-NamMinhNeural", "name": "Nam Minh (Mặc định)"},
-                {"id": "en-US-ChristopherNeural", "name": "Christopher (Tiếng Anh)"}
-            ]
-
-        # Nạp vào ComboBox: Hiển thị Name, nhưng ngầm lưu ID
-        for v in voices_to_add:
-            self.cb_edge_voice.addItem(v["name"], userData=v["id"])
-
-        # Phục hồi lại giọng đã lưu trong file YAML (nếu nó nằm trong list mới lọc)
-        saved_edge_voice = getattr(self.cfg.step6, "edge_voice", "vi-VN-NamMinhNeural")
-        idx = self.cb_edge_voice.findData(saved_edge_voice)
-        if idx >= 0:
-            self.cb_edge_voice.setCurrentIndex(idx)
-
     def _toggle_dynamic_ui(self):
-        # Hiện box Qwen nếu chọn Qwen
         is_qwen = self.cb_s6_engine.currentText() == "qwen"
         self.w_qwen_voice.setVisible(is_qwen)
         self.lbl_qwen_voice.setVisible(is_qwen)
-
-        # Hiện box Edge nếu chọn Edge
         is_edge = self.cb_s6_engine.currentText() == "edge"
         self.w_edge_voice.setVisible(is_edge)
         self.lbl_edge_voice.setVisible(is_edge)
-
-        # Hiện mục thư mục nhạc nền nếu chọn Mode 2
         is_mode_2 = self.cb_s6_mode.currentIndex() == 1
         self.w_bgm.setVisible(is_mode_2)
         self.lbl_bgm.setVisible(is_mode_2)
 
-    def _pick_color(self, target, label_ref):
-        if target == "text": initial = QColor(*self.step5_text_rgb)
-        elif target == "outline": initial = QColor(*self.step5_out_rgb)
-        elif target == "pill": initial = QColor(*self.step5_pill_rgb)
-        else: return
-        
-        color = QColorDialog.getColor(initial, self, f"Chọn màu")
-        if color.isValid():
-            rgb = (color.red(), color.green(), color.blue())
-            label_ref.setStyleSheet(f"background-color: {_rgb_hex(*rgb)}; border: 1px solid #7f8c8d; border-radius: 6px;")
-            if target == "text": self.step5_text_rgb = rgb
-            elif target == "outline": self.step5_out_rgb = rgb
-            elif target == "pill": self.step5_pill_rgb = rgb
+    def _pick_color(self, target, swatch):
+        """Color Picker đẹp và dễ dùng giống CapCut"""
+        dialog = CapCutStyleColorDialog(self, target)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            rgb = dialog.get_rgb()
+            alpha = dialog.get_alpha()
+
+            swatch.setStyleSheet(f"""
+                background-color: {_rgb_hex(*rgb)};
+                border: 2px solid #555;
+                border-radius: 6px;
+            """)
+
+            if target == "text":
+                self.step5_text_rgb = rgb + (alpha,)
+            elif target == "outline":
+                self.step5_out_rgb = rgb + (alpha,)
+            elif target == "pill":
+                self.step5_pill_rgb = rgb + (alpha,)
 
     def _save_and_close(self):
-        """Lưu config - Buộc ghi target_lang top-level"""
         c = self.cfg
         try:
+            # ==================== NGÔN NGỮ ====================
             source_code = self.cb_source.currentData() or "zh"
             target_code = self.cb_target.currentData() or "vi"
-
             src = self.registry.get(source_code)
             tgt = self.registry.get(target_code)
 
-            # ==================== BUỘC GHI TOP-LEVEL ====================
             c.source_lang = source_code
             c.target_lang = target_code
 
-            # ==================== CÁC STEP ====================
             c.step3.__dict__['language'] = src.whisper
             c.step3.__dict__['image_ocr_lang'] = src.paddleocr
-
             c.step4.__dict__['source_lang'] = src.gemini
             c.step4.__dict__['target_lang'] = target_code
-
             c.step5.__dict__['ocr_lang'] = src.paddleocr
-
             c.step6.__dict__['tts_lang'] = target_code
             c.step6.__dict__['google_lang'] = target_code
 
-            if hasattr(self, 'cb_edge_voice') and self.cb_edge_voice.currentData():
-                c.step6.__dict__['edge_voice'] = self.cb_edge_voice.currentData()
-            else:
-                c.step6.__dict__['edge_voice'] = f"{tgt.edge_prefix}-Neural"
+            # ==================== TTS ENGINE (QUAN TRỌNG NHẤT) ====================
+            engine = self.cb_s6_engine.currentText().lower().strip()
+            c.step6.__dict__['tts_engine'] = engine
 
-            # ==================== GIÁ TRỊ GUI KHÁC ====================
+            # Chỉ lưu voice tương ứng với engine được chọn
+            if engine == "edge":
+                if hasattr(self, 'cb_edge_voice') and self.cb_edge_voice.currentData():
+                    c.step6.__dict__['edge_voice'] = self.cb_edge_voice.currentData()
+                else:
+                    c.step6.__dict__['edge_voice'] = f"{tgt.edge_prefix}-NamMinhNeural"
+
+            elif engine == "qwen":
+                if hasattr(self, 'cb_qwen_voice') and self.cb_qwen_voice.currentData():
+                    c.step6.__dict__['qwen_voice'] = self.cb_qwen_voice.currentData()
+                else:
+                    c.step6.__dict__['qwen_voice'] = getattr(c.step6, 'qwen_voice', "nsnd_kim_cuc")
+
+            elif engine == "google":
+                # Google TTS không cần voice cụ thể
+                pass
+
+            # ==================== CÁC THAM SỐ KHÁC ====================
             c.ffmpeg_bin = self.le_ffmpeg.text().strip()
-
             c.step3.__dict__['srt_source'] = self.cb_s3_src.currentText()
             c.step3.__dict__['image_step_frames'] = int(self.le_s3_frames.text() or 10)
-
             c.step4.__dict__['model_name'] = self.le_s4_model.text().strip()
+
             keys_text = self.txt_s4_keys.toPlainText().strip()
             c.step4.__dict__['gemini_api_keys'] = [k.strip() for k in re.split(r'[,;\n]', keys_text) if k.strip()] if keys_text else []
 
             c.step5.__dict__['font_path'] = self.le_font_path.text().strip()
 
-            c.step6.__dict__['tts_engine'] = self.cb_s6_engine.currentText().lower() if hasattr(self, 'cb_s6_engine') else "edge"
-            c.step6.__dict__['qwen_voice'] = self.cb_qwen_voice.currentData() if hasattr(self, 'cb_qwen_voice') else getattr(c.step6, 'qwen_voice', None)
+            # Audio parameters - An toàn hơn
+            if hasattr(self, 'le_s6_vol'):
+                c.step6.__dict__['tts_volume'] = float(self.le_s6_vol.text() or 1.4)
+            if hasattr(self, 'le_s6_bg_vol'):
+                c.step6.__dict__['music_volume'] = float(self.le_s6_bg_vol.text() or 0.35)
+            if hasattr(self, 'le_s6_extra'):
+                c.step6.__dict__['extra_voice_volume'] = float(self.le_s6_extra.text() or 0.05)
+            if hasattr(self, 'le_s6_sp'):
+                c.step6.__dict__['stretch_ratio'] = float(self.le_s6_sp.text() or 1.1)
+            if hasattr(self, 'le_s6_pitch'):
+                c.step6.__dict__['pitch_factor'] = float(self.le_s6_pitch.text() or 1.2)
+            if hasattr(self, 'le_s6_speed'):
+                c.step6.__dict__['speedup_when_short'] = float(self.le_s6_speed.text() or 1.5)
 
-            c.step6.__dict__['tts_volume'] = float(self.le_s6_vol.text() or 1.4)
-            c.step6.__dict__['speedup_when_short'] = float(self.le_s6_speed.text() or 1.5)
-            c.step6.__dict__['music_volume'] = float(self.le_s6_bg_vol.text() or 0.35)
-            c.step6.__dict__['extra_voice_volume'] = float(self.le_s6_extra.text() or 0.05)
-            c.step6.__dict__['stretch_ratio'] = float(self.le_s6_sp.text() or 1.1)
-            c.step6.__dict__['pitch_factor'] = float(self.le_s6_pitch.text() or 1.2)
             c.step6.__dict__['audio_mode'] = 1 if self.cb_s6_mode.currentIndex() == 0 else 2
-            c.step6.__dict__['random_bgm_dir'] = self.le_bg_music.text().strip()
+            c.step6.__dict__['random_bgm_dir'] = getattr(self, 'le_bg_music', QLineEdit("")).text().strip()
 
+            # Lưu màu RGBA
             self.parent.step5_text_rgb = getattr(self, 'step5_text_rgb', [255, 255, 255, 255])
-            self.parent.step5_out_rgb = getattr(self, 'step5_out_rgb', [0, 0, 0, 255])
-            self.parent.step5_pill_rgb = getattr(self, 'step5_pill_rgb', [0, 0, 0, 200])
+            self.parent.step5_out_rgb  = getattr(self, 'step5_out_rgb',  [0, 0, 0, 255])
+            self.parent.step5_pill_rgb = getattr(self, 'step5_pill_rgb', [0, 0, 0, 190])
 
+            c.step5.text_color = list(self.parent.step5_text_rgb)
+            c.step5.outline_color = list(self.parent.step5_out_rgb)
+            c.step5.pill_background_color = list(self.parent.step5_pill_rgb)
+
+            self.parent.log_msg(f"✅ Đã lưu config — {src.name} → {tgt.name} | Engine: {engine.upper()}")
+            
         except Exception as e:
-            logger.error(f"Lỗi xử lý Setting: {e}")
-            self.parent.log_msg(f"⚠️ Lỗi xử lý Setting: {e}")
+            logger.error(f"Lỗi lưu Setting: {e}")
+            self.parent.log_msg(f"⚠️ Lỗi lưu Setting: {e}")
             return
 
-        # Gọi lưu
         self.parent.save_yaml_config()
-        self.parent.log_msg(f"✅ Đã lưu config!\nSource: {src.name} → Target: {tgt.name}")
         self.accept()
-        
-    def _sync_source_lang(self, text):
-        """Hàm tự động copy chữ từ Ngôn ngữ Nguồn (Tab 1) sang Ngôn ngữ Gốc (Tab 2)"""
-        self.le_s3_lang.setText(text.strip())
-
 # ======================================================================
-# WIDGET VẼ ROI CINEMATIC MASK
+# VIDEO CANVAS — ROI DRAWING (unchanged logic, minor visual polish)
 # ======================================================================
 class VideoCanvas(QLabel):
     roi_updated = pyqtSignal(float, float)
@@ -635,11 +1307,10 @@ class VideoCanvas(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setStyleSheet("background-color: #0f0f0f; border-radius: 8px;")
-        from PyQt6.QtWidgets import QSizePolicy
+        self.setStyleSheet(f"background-color: #050709; border-radius: 10px;")
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
-        self.setMinimumSize(320, 240) # Đảm bảo canvas không bị co dúm lại quá nhỏ
-        
+        self.setMinimumSize(320, 200)
+
         self.current_frame = None
         self.is_drawing = False
         self.temp_y = None
@@ -653,20 +1324,22 @@ class VideoCanvas(QLabel):
         self.repaint_canvas()
 
     def repaint_canvas(self):
-        if self.current_frame is None: return
+        if self.current_frame is None:
+            self._draw_placeholder()
+            return
         lbl_w, lbl_h = self.width(), self.height()
         if lbl_w < 10 or lbl_h < 10: return
-        
+
         frame_h, frame_w = self.current_frame.shape[:2]
         ratio = min(lbl_w / frame_w, lbl_h / frame_h)
         new_w, new_h = int(frame_w * ratio), int(frame_h * ratio)
-        
+
         self.y_off = (lbl_h - new_h) // 2
         self.draw_h = new_h
 
         resized = cv2.resize(self.current_frame, (new_w, new_h))
         rgb_image = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-        
+
         q_img = QImage(rgb_image.data, new_w, new_h, new_w * 3, QImage.Format.Format_RGB888)
         pixmap = QPixmap.fromImage(q_img)
 
@@ -676,35 +1349,52 @@ class VideoCanvas(QLabel):
         if self.cursor().shape() == Qt.CursorShape.CrossCursor or self.roi_end_y > 0:
             ry1 = int(new_h * self.roi_start_y)
             ry2 = int(new_h * self.roi_end_y)
-            
+
             if self.is_drawing and self.temp_y is not None:
                 ry1 = min(self._start_y, self.temp_y)
                 ry2 = max(self._start_y, self.temp_y)
                 ry1, ry2 = max(0, min(new_h, ry1)), max(0, min(new_h, ry2))
 
-            # Vẽ màn đen bóng mờ cho phần KHÔNG CHỌN
-            painter.fillRect(0, 0, new_w, ry1, QColor(0, 0, 0, 180)) 
-            painter.fillRect(0, ry2, new_w, new_h - ry2, QColor(0, 0, 0, 180)) 
-            
-            # Vẽ đường Line đứt đoạn đẹp mắt
-            pen = QPen(QColor(46, 204, 113), 2, Qt.PenStyle.DashLine)
+            # Dark overlay outside ROI
+            painter.fillRect(0, 0, new_w, ry1, QColor(0, 0, 0, 160))
+            painter.fillRect(0, ry2, new_w, new_h - ry2, QColor(0, 0, 0, 160))
+
+            # ROI border — cyan dashed
+            pen = QPen(QColor(0, 212, 255), 1.5, Qt.PenStyle.DashLine)
             painter.setPen(pen)
             painter.drawLine(0, ry1, new_w, ry1)
             painter.drawLine(0, ry2, new_w, ry2)
 
-            # Vẽ chữ thông báo tọa độ Y
-            painter.setPen(QPen(QColor(255, 255, 255)))
-            font = QFont("Arial", 12, QFont.Weight.Bold)
-            painter.setFont(font)
-            
-            pct1, pct2 = (ry1 / new_h) * 100, (ry2 / new_h) * 100
-            # Nền cho Text
-            painter.fillRect(10, ry1 - 25, 75, 20, QColor(0, 0, 0, 150))
-            painter.fillRect(10, ry2 + 5, 75, 20, QColor(0, 0, 0, 150))
-            # Text
-            painter.drawText(15, ry1 - 10, f"Y: {pct1:.1f}%")
-            painter.drawText(15, ry2 + 20, f"Y: {pct2:.1f}%")
+            # Corner handles
+            handle_color = QColor(0, 212, 255)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(handle_color))
+            for hx in [0, new_w - 6]:
+                painter.drawRect(hx, ry1 - 3, 6, 6)
+                painter.drawRect(hx, ry2 - 3, 6, 6)
 
+            # Coordinate labels
+            painter.setFont(QFont("JetBrains Mono, Consolas", 10, QFont.Weight.Bold))
+            pct1, pct2 = (ry1 / new_h) * 100, (ry2 / new_h) * 100
+
+            for y_pos, pct in [(ry1, pct1), (ry2, pct2)]:
+                bg_y = y_pos + 4 if y_pos == ry2 else y_pos - 20
+                painter.fillRect(8, bg_y, 72, 16, QColor(0, 0, 0, 180))
+                painter.setPen(QPen(QColor(0, 212, 255)))
+                painter.drawText(12, bg_y + 12, f"Y: {pct:.1f}%")
+
+        painter.end()
+        self.setPixmap(pixmap)
+
+    def _draw_placeholder(self):
+        lbl_w, lbl_h = self.width(), self.height()
+        pixmap = QPixmap(lbl_w, lbl_h)
+        pixmap.fill(QColor("#050709"))
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(COLORS['text_muted'])))
+        painter.setFont(QFont("Segoe UI", 13))
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "Chọn video để xem trước →")
         painter.end()
         self.setPixmap(pixmap)
 
@@ -722,13 +1412,11 @@ class VideoCanvas(QLabel):
         if event.button() == Qt.MouseButton.LeftButton and self.is_drawing:
             self.is_drawing = False
             if self.draw_h == 0: return
-            
             y1, y2 = self._start_y, event.pos().y() - self.y_off
-            pct1, pct2 = max(0.0, min(1.0, y1 / self.draw_h)), max(0.0, min(1.0, y2 / self.draw_h))
-            
+            pct1 = max(0.0, min(1.0, y1 / self.draw_h))
+            pct2 = max(0.0, min(1.0, y2 / self.draw_h))
             self.roi_start_y, self.roi_end_y = min(pct1, pct2), max(pct1, pct2)
             self.temp_y = None
-            
             self.roi_updated.emit(self.roi_start_y, self.roi_end_y)
             self.repaint_canvas()
 
@@ -736,80 +1424,75 @@ class VideoCanvas(QLabel):
         super().resizeEvent(event)
         self.repaint_canvas()
 
+
 # ======================================================================
-# GIAO DIỆN CHÍNH
+# MAIN WINDOW — REDESIGNED LAYOUT
 # ======================================================================
 class ProGUI(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"Nini Auto Edit Pro - Studio Master v{__version__}")
+        self.setWindowTitle(f"  Reup Video Pro — Studio Master  v{__version__}")
         
+        # ==============================================================
+        # 1. Đặt kích thước tối thiểu (Không cho phép co nhỏ hơn số này)
+        self.setMinimumSize(1200, 700)
+        # 2. Đặt kích thước mặc định khi ở trạng thái Thu Nhỏ (Restore Down)
+        self.resize(1366, 768)
+        # ==============================================================
+        
+        icon_path = Path("app/assets/icon.ico")
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+        else:
+            logger.warning("Không tìm thấy icon.ico")
+
         self._init_config()
-        self.cap = None; self.fps = 30; self.total_frames = 0; self.is_playing = False
-        
+        self.cap = None
+        self.fps = 30
+        self.total_frames = 0
+        self.is_playing = False
+
         self.current_folder = self.cfg.pipeline.input_videos
         self.output_folder = getattr(self.cfg.pipeline, 'output_dir', "")
-        self.current_video_path = None 
+        self.current_video_path = None
         self.current_srt_path = None
         self.sub_data_cache = []
-        
+
         self.is_paused_for_sub = False
         self.worker = None
         self.pause_event = threading.Event()
         self.pause_event.set()
-        
-        # --- THÊM EVENT CHO ROI ---
         self.pause_roi_event = threading.Event()
         self.pause_roi_event.set()
-        
+
         self.play_timer = QTimer()
         self.play_timer.timeout.connect(self._video_loop)
 
         self._setup_ui()
-        self._apply_dark_theme()
+        self.setStyleSheet(GLOBAL_QSS)
 
         if self.current_folder and os.path.exists(str(self.current_folder)):
             self.reload_folder()
-            
-        # --- LỆNH FULL MÀN HÌNH CHUẨN XÁC NHẤT ---
-        QTimer.singleShot(100, self.showMaximized)
-
-    # --- THÊM HÀM NÀY ĐỂ TRÁNH LỖI QThread KHI ĐÓNG APP ---
-    def closeEvent(self, event):
-        self.log_msg("⚠️ Đang buộc thoát toàn bộ hệ thống. Vui lòng đợi...")
         
-        # 1. Giải phóng Video Player để không bị kẹt file WinError 32
+        # QTimer.singleShot(100, self.showMaximized)
+
+    def closeEvent(self, event):
         if self.cap:
             self.cap.release()
             self.cap = None
-
-        # 2. Ẩn giao diện ngay lập tức để người dùng không cảm thấy bị lag/treo
         self.hide()
         event.accept()
-
-        # 3. TIÊU DIỆT TẬN GỐC TẤT CẢ CHILD PROCESSES (FFMPEG, AI VENV, V.V...)
         current_pid = os.getpid()
         try:
             if platform.system() == "Windows":
-                # Lệnh taskkill của Windows: 
-                # /F: Ép buộc (Force)
-                # /T: Giết cả tiến trình mẹ lẫn mọi tiến trình con (Tree)
-                subprocess.Popen(
-                    f"taskkill /F /T /PID {current_pid}", 
-                    shell=True, 
-                    stdout=subprocess.DEVNULL, 
-                    stderr=subprocess.DEVNULL
-                )
+                subprocess.Popen(f"taskkill /F /T /PID {current_pid}", shell=True,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
-                # Dành cho Linux/Mac
                 import signal
                 os.killpg(os.getpgrp(), signal.SIGKILL)
-        except Exception as e:
-            print(f"Lỗi khi dọn dẹp tiến trình: {e}")
-
-        # 4. Thoát cứng cấp hệ điều hành (Bỏ qua mọi vòng lặp hoặc try/finally đang chạy)
+        except: pass
         os._exit(0)
-            
+
     def _ms_to_srt_time(self, ms):
         s, ms = divmod(int(ms), 1000)
         m, s = divmod(s, 60)
@@ -817,257 +1500,489 @@ class ProGUI(QMainWindow):
         return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
     def _init_config(self):
-        if ConfigLoader: self.cfg = ConfigLoader.load()
+        if ConfigLoader:
+            self.cfg = ConfigLoader.load()
         else:
             class DummyCfg: pass
             self.cfg = DummyCfg()
-            self.cfg.pipeline = DummyCfg(); self.cfg.pipeline.input_videos = ""; self.cfg.pipeline.output_dir = ""
-            self.cfg.step2 = DummyCfg(); self.cfg.step3 = DummyCfg(); self.cfg.step4 = DummyCfg(); self.cfg.step6 = DummyCfg()
-            self.cfg.step5 = DummyCfg(); self.cfg.step5.roi_y_start = 0.6; self.cfg.step5.roi_y_end = 1.0
-            self.cfg.step5.text_color = "&H0000FFFF"; self.cfg.step5.outline_color = "&H00000000"
+            self.cfg.pipeline = DummyCfg()
+            self.cfg.pipeline.input_videos = ""
+            self.cfg.pipeline.output_dir = ""
+            for s in ['step2','step3','step4','step6']:
+                setattr(self.cfg, s, DummyCfg())
+            self.cfg.step5 = DummyCfg()
+            self.cfg.step5.roi_y_start = 0.6
+            self.cfg.step5.roi_y_end = 1.0
+            self.cfg.step5.text_color = "&H0000FFFF"
+            self.cfg.step5.outline_color = "&H00000000"
 
-        # ==================== SỬA PHẦN MÀU Ở ĐÂY ====================
-        def get_color_list(key, default_rgb=(255,255,255)):
+        # ==================== ĐỌC MÀU RGBA - ĐẢM BẢO LUÔN CÓ 4 PHẦN TỬ ====================
+        def get_color_list(key, default=[255, 255, 255, 255]):
             val = getattr(self.cfg.step5, key, None)
-            if isinstance(val, (list, tuple)) and len(val) >= 3:
-                return list(val[:3])   # lấy 3 giá trị RGB
+            if isinstance(val, (list, tuple)):
+                # Đảm bảo luôn có đủ 4 giá trị (R,G,B,A)
+                color = [int(x) for x in val]
+                while len(color) < 4:
+                    color.append(default[len(color)])
+                return color[:4]
             elif isinstance(val, str) and val.startswith("&H"):
-                return _ass_to_rgb(val)[:3]
-            else:
-                return list(default_rgb)
+                return _ass_to_rgba_list(val)
+            return default
 
-        self.step5_text_rgb    = get_color_list('text_color', (255, 255, 255))
-        self.step5_out_rgb = get_color_list('outline_color', (0, 0, 0))
-        self.step5_pill_rgb    = get_color_list('pill_background_color', (0, 0, 0))
-        # ===========================================================
+        self.step5_text_rgb    = get_color_list('text_color',    [255, 255, 255, 255])
+        self.step5_out_rgb     = get_color_list('outline_color', [0,   0,   0,   255])
+        self.step5_pill_rgb    = get_color_list('pill_background_color', [0, 0, 0, 190])
+        # =================================================================
 
     def save_yaml_config(self):
         try:
-            config_path = Path("config.yaml").resolve()
+            cp = Path("config.yaml").resolve()
+            data = yaml.safe_load(open(cp, encoding="utf-8")) if cp.exists() else {}
+            data = data or {}
 
-            # Đọc file hiện tại
-            if config_path.exists():
-                with open(config_path, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f) or {}
-            else:
-                data = {}
-
-            # Buộc ghi top-level source_lang và target_lang
+            # Các thông tin cơ bản
             data["source_lang"] = getattr(self.cfg, "source_lang", "zh")
             data["target_lang"] = getattr(self.cfg, "target_lang", "vi")
+            data["ffmpeg_bin"] = getattr(self.cfg, "ffmpeg_bin", "")
 
-            # Ghi các step
-            if "step3" not in data: data["step3"] = {}
-            data["step3"]["language"] = getattr(self.cfg.step3, "language", "zh")
-            data["step3"]["image_ocr_lang"] = getattr(self.cfg.step3, "image_ocr_lang", "ch")
+            # Step 3, 4, 6 giữ nguyên
+            for sec, pairs in [
+                ("step3", [("language","zh"), ("image_ocr_lang","ch"), ("srt_source","image"), ("image_step_frames",10)]),
+                ("step4", [("model_name","gemini-2.5-flash"), ("source_lang","zh-CN"), ("target_lang","vi"), ("gemini_api_keys",[])]),
+                ("step6", [("tts_lang","vi"), ("google_lang","vi"), ("tts_volume",1.4), ("music_volume",0.35),
+                          ("extra_voice_volume",0.05), ("stretch_ratio",1.1), ("pitch_factor",1.2),
+                          ("speedup_when_short",1.5), ("audio_mode",1), ("random_bgm_dir",""), ("tts_engine","qwen")]),
+            ]:
+                if sec not in data: data[sec] = {}
+                for k, d in pairs:
+                    data[sec][k] = getattr(getattr(self.cfg, sec, {}), k, d)
 
-            if "step4" not in data: data["step4"] = {}
-            data["step4"]["source_lang"] = getattr(self.cfg.step4, "source_lang", "zh-CN")
-            data["step4"]["target_lang"] = getattr(self.cfg.step4, "target_lang", "vi")
+            # ==================== LƯU MÀU RGBA ĐÚNG CÁCH ====================
+            if "step5" not in data:
+                data["step5"] = {}
 
-            if "step5" not in data: data["step5"] = {}
             data["step5"]["ocr_lang"] = getattr(self.cfg.step5, "ocr_lang", "ch")
+            data["step5"]["roi_y_start"] = getattr(self.cfg.step5, "roi_y_start", 0.6)
+            data["step5"]["roi_y_end"] = getattr(self.cfg.step5, "roi_y_end", 1.0)
+            data["step5"]["font_path"] = getattr(self.cfg.step5, "font_path", "")
 
-            if "step6" not in data: data["step6"] = {}
-            data["step6"]["tts_lang"] = getattr(self.cfg.step6, "tts_lang", "vi")
-            data["step6"]["google_lang"] = getattr(self.cfg.step6, "google_lang", "vi")
-            data["step6"]["edge_voice"] = getattr(self.cfg.step6, "edge_voice", "vi-VN-NamMinhNeural")
-            data["step6"]["tts_volume"] = getattr(self.cfg.step6, "tts_volume", 1.4)
-            data["step6"]["music_volume"] = getattr(self.cfg.step6, "music_volume", 0.35)
-            data["step6"]["extra_voice_volume"] = getattr(self.cfg.step6, "extra_voice_volume", 0.1)
-            data["step6"]["stretch_ratio"] = getattr(self.cfg.step6, "stretch_ratio", 1.1)
-            data["step6"]["pitch_factor"] = getattr(self.cfg.step6, "pitch_factor", 1.2)
-            data["step6"]["audio_mode"] = getattr(self.cfg.step6, "audio_mode", 1)
-            data["step6"]["speedup_when_short"] = getattr(self.cfg.step6, "speedup_when_short", 2.0)
-            data["step6"]["random_bgm_dir"] = getattr(self.cfg.step6, "random_bgm_dir", "")
-            
+            # Lưu màu theo đúng format list 4 số RGBA
+            data["step5"]["text_color"] = list(self.step5_text_rgb)
+            data["step5"]["outline_color"] = list(self.step5_out_rgb)
+            data["step5"]["pill_background_color"] = list(self.step5_pill_rgb)
 
-            # 4. Lưu trực tiếp file yaml
-            with open(config_path, "w", encoding="utf-8") as f:
-                yaml.dump(data, f, allow_unicode=True, sort_keys=False)
-                
-            self.log_msg(f"💾 Đã lưu cấu hình trực tiếp vào: {config_path}")
-            
+            # Các trường khác của step5
+            data["step5"]["font_size"] = getattr(self.cfg.step5, "font_size", 45)
+            data["step5"]["max_words_per_line"] = getattr(self.cfg.step5, "max_words_per_line", 10)
+
+            # Lưu file
+            yaml.dump(data, open(cp, "w", encoding="utf-8"), allow_unicode=True, sort_keys=False)
+            self.log_msg(f"💾 Config đã lưu đúng RGBA → {cp}")
+
         except Exception as e:
-            self.log_msg(f"❌ Lỗi lưu cấu hình: {e}")
+            self.log_msg(f"❌ Lỗi lưu config: {e}")
+            logger.exception("Save config error")
 
+    # ==========================================
+    # LAYOUT SETUP
+    # ==========================================
     def _setup_ui(self):
-        
         central = QWidget()
         self.setCentralWidget(central)
-        main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
+        root = QVBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
+        # ── TITLE BAR ──
+        titlebar = self._build_titlebar()
+        root.addWidget(titlebar)
+
+        # ── MAIN SPLITTER ──
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        
-        # --- PANEL 1: WORKSPACE ---
-        pnl_left = QWidget()
-        l_layout = QVBoxLayout(pnl_left)
-        l_layout.setContentsMargins(0, 0, 0, 0)
-        
-        group_tools = QGroupBox("📁 Quản lý File")
-        lay_tools = QVBoxLayout(group_tools)
-        h1 = QHBoxLayout(); h1.addWidget(QPushButton("Mở Input", clicked=self.load_video_folder)); h1.addWidget(QPushButton("Reload", clicked=self.reload_folder))
-        h2 = QHBoxLayout(); h2.addWidget(QPushButton("Chọn Output", clicked=self.select_output_folder)); h2.addWidget(QPushButton("Mở Output", clicked=self.open_output_folder))
-        lay_tools.addLayout(h1); lay_tools.addLayout(h2)
-        l_layout.addWidget(group_tools)
-        
-        self.list_videos = QListWidget()
-        self.list_videos.itemClicked.connect(self._on_video_selected)
-        l_layout.addWidget(self.list_videos, stretch=1)
-        
-        group_steps = QGroupBox("⚙️ Cấu hình Các Bước")
-        lay_steps = QVBoxLayout(group_steps)
-        self.step_vars = {}
-        for key, name in [("s3", "Dò Sub"), 
-                          ("s4", "Dịch thuật"), ("s5", "Vẽ Phụ đề"), ("s6", "Mix TTS")]:
-            chk = QCheckBox(name); chk.setChecked(True); self.step_vars[key] = chk
-            lay_steps.addWidget(chk)
-            
-        self.chk_pause = QCheckBox("✋ Tạm dừng sửa Sub ở Bước 4")
-        self.chk_pause.setChecked(True)
-        self.chk_pause.setStyleSheet("color: #f1c40f; font-weight: bold; margin-top: 5px;")
-        lay_steps.addWidget(self.chk_pause)
-        
-        # --- THÊM NÚT DỪNG ROI ---
-        self.chk_pause_roi = QCheckBox("📐 Dừng set ROI cho MỖI VIDEO")
-        self.chk_pause_roi.setChecked(True)
-        self.chk_pause_roi.setStyleSheet("color: #e74c3c; font-weight: bold;")
-        lay_steps.addWidget(self.chk_pause_roi)
-        
-        l_layout.addWidget(group_steps)
-        
-        h_run = QHBoxLayout()
-        self.btn_setup = QPushButton("⚙️ SETTING"); self.btn_setup.clicked.connect(self.open_setup)
-        self.btn_run = QPushButton("▶ CHẠY BƯỚC 1 -> 4")
-        self.btn_run.setObjectName("btnRun")
-        self.btn_run.setMinimumHeight(45)
-        self.btn_run.clicked.connect(self._on_btn_run_clicked)
-        h_run.addWidget(self.btn_setup); h_run.addWidget(self.btn_run, stretch=1)
-        l_layout.addLayout(h_run)
+        self.splitter.setHandleWidth(2)
+        self.splitter.setChildrenCollapsible(False)
 
-        # --- PANEL 2: VIDEO PLAYER ---
-        pnl_center = QWidget()
-        c_layout = QVBoxLayout(pnl_center)
-        c_layout.setContentsMargins(0, 0, 0, 0)
-        
-        h_roi = QHBoxLayout()
-        self.lbl_roi_val = QLabel(f"📐 Tọa độ ROI: {self.cfg.step5.roi_y_start:.2f} - {self.cfg.step5.roi_y_end:.2f}")
-        self.lbl_roi_val.setStyleSheet("color: #bdc3c7;")
-        self.btn_roi = QPushButton("✂ Click để Vẽ ROI")
-        self.btn_roi.clicked.connect(self.toggle_roi_mode)
-        h_roi.addWidget(self.lbl_roi_val); h_roi.addStretch(); h_roi.addWidget(self.btn_roi)
-        c_layout.addLayout(h_roi)
-        
-        self.canvas = VideoCanvas()
-        self.canvas.roi_start_y, self.canvas.roi_end_y = self.cfg.step5.roi_y_start, self.cfg.step5.roi_y_end
-        self.canvas.roi_updated.connect(self._on_roi_updated)
-        c_layout.addWidget(self.canvas, stretch=1)
-        
-        h_time = QHBoxLayout()
-        self.btn_play = QPushButton("▶ Phát"); self.btn_play.clicked.connect(self.toggle_play)
-        
-        # SỬ DỤNG SLIDER MỚI CÓ THỂ NHẤP CHUỘT
-        self.slider = ClickableSlider(Qt.Orientation.Horizontal) 
-        self.slider.sliderMoved.connect(self.on_slider_moved)
-        
-        self.lbl_timecode = QLabel("00:00:00 / 00:00:00"); self.lbl_timecode.setFont(QFont("Consolas", 10))
-        h_time.addWidget(self.btn_play); h_time.addWidget(self.slider); h_time.addWidget(self.lbl_timecode)
-        c_layout.addLayout(h_time)
+        self.splitter.addWidget(self._build_left_panel())
+        self.splitter.addWidget(self._build_center_panel())
+        self.splitter.addWidget(self._build_right_panel())
+        self.splitter.setSizes([280, 720, 360])
 
-        # --- PANEL 3: BẢNG SUBTITLE ---
-        pnl_right = QWidget()
-        r_layout = QVBoxLayout(pnl_right)
-        r_layout.setContentsMargins(0, 0, 0, 0)
-        
-        h_sub_top = QHBoxLayout()
-        h_sub_top.addWidget(QLabel("📝 Dịch thuật (Cột 2 cho phép sửa)"))
-        h_sub_top.addStretch()
-        btn_load_sub = QPushButton("Nạp Thủ Công"); btn_load_sub.clicked.connect(lambda: self.load_srt_file(None))
-        h_sub_top.addWidget(btn_load_sub)
-        r_layout.addLayout(h_sub_top)
-        
-        self.table_sub = QTableWidget(0, 2)
-        self.table_sub.setHorizontalHeaderLabels(["Time", "Subtitle Bản dịch"])
-        self.table_sub.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.table_sub.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table_sub.verticalHeader().setVisible(False)
-        self.table_sub.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        # BẬT XUỐNG DÒNG (WORD-WRAP) CHO SUBTITLE
-        self.table_sub.setWordWrap(True)
-        self.table_sub.setTextElideMode(Qt.TextElideMode.ElideNone) 
-        
-        self.table_sub.cellClicked.connect(self._on_sub_row_clicked)
-        r_layout.addWidget(self.table_sub, stretch=1)
+        root.addWidget(self.splitter, stretch=1)
 
-        self.splitter.addWidget(pnl_left); self.splitter.addWidget(pnl_center); self.splitter.addWidget(pnl_right)
-        self.splitter.setSizes([300, 700, 350]) 
-        main_layout.addWidget(self.splitter, stretch=1)
-        # 1. Khi chiều rộng bảng thay đổi -> Tự tính lại chiều cao các hàng
-        self.table_sub.horizontalHeader().sectionResized.connect(lambda: self.table_sub.resizeRowsToContents())
-        # 2. Khi người dùng gõ sửa chữ (hoặc copy paste) -> Tự động tính lại chiều cao
-        self.table_sub.itemChanged.connect(lambda item: self.table_sub.resizeRowsToContents())
-
-        # --- KHU VỰC DƯỚI: PROGRESS BAR & LOG ---
-        pnl_bottom = QWidget()
-        pnl_bottom.setFixedHeight(150) # Tăng xíu chiều cao cho rộng
-        b_layout = QVBoxLayout(pnl_bottom)
-        b_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # 1. KHỞI TẠO CONSOLE TRƯỚC
-        self.console = QTextEdit()
-        self.console.setReadOnly(True)
-        self.console.setFont(QFont("Consolas", 10))
-        
-        # 2. KHỞI TẠO LABEL VÀ NÚT XÓA LOG
-        h_prog = QHBoxLayout()
-        self.lbl_progress = QLabel("Sẵn sàng (0/0 File)")
-        self.lbl_progress.setStyleSheet("color: #ecf0f1; font-weight: bold; font-size: 13px;")
-        
-        btn_clear_log = QPushButton("🗑 Xóa Log")
-        btn_clear_log.setFixedWidth(100)
-        btn_clear_log.clicked.connect(self.console.clear) # Bay giờ self.console đã tồn tại nên không lỗi nữa
-        
-        h_prog.addWidget(self.lbl_progress)
-        h_prog.addStretch()
-        h_prog.addWidget(btn_clear_log)
-        b_layout.addLayout(h_prog)
-        
-        # 3. KHỞI TẠO PROGRESS BAR
-        self.progressbar = QProgressBar()
-        self.progressbar.setFixedHeight(8) # Làm dày xíu cho dễ nhìn
-        self.progressbar.setTextVisible(False) 
-        self.progressbar.setValue(0)
-        b_layout.addWidget(self.progressbar)
-        
-        # 4. THÊM CONSOLE VÀO GIAO DIỆN
-        b_layout.addWidget(self.console)
-        main_layout.addWidget(pnl_bottom)
+        # ── STATUS BAR ──
+        statusbar = self._build_statusbar()
+        root.addWidget(statusbar)
 
         self.chk_pause.stateChanged.connect(self._update_run_btn_label)
         self._update_run_btn_label()
 
-    def _apply_dark_theme(self):
-        dark_qss = """
-        QMainWindow, QWidget { background-color: #121212; color: #ecf0f1; }
-        QGroupBox { border: 1px solid #333; border-radius: 6px; margin-top: 10px; padding-top: 15px; font-weight: bold;}
-        QGroupBox::title { subcontrol-origin: margin; left: 10px; color: #95a5a6; }
-        QPushButton { background-color: #2c3e50; border: none; padding: 6px 12px; border-radius: 4px; }
-        QPushButton:hover { background-color: #34495e; }
-        QPushButton#btnRun { background-color: #27ae60; font-weight: bold; font-size: 14px; border-radius: 6px;}
-        QPushButton#btnRun:hover { background-color: #2ecc71; }
-        QPushButton#btnRun:disabled { background-color: #7f8c8d; color: #bdc3c7;}
-        QListWidget, QTableWidget, QTextEdit { background-color: #1e1e1e; border: 1px solid #2c3e50; border-radius: 4px; outline: none;}
-        QTableWidget::item:selected { background-color: #2980b9; color: white;}
-        QProgressBar { border: none; background-color: #2c3e50; border-radius: 3px; }
-        QProgressBar::chunk { background-color: #2ecc71; border-radius: 3px; }
-        QSplitter::handle { background-color: #121212; }
-        """
-        self.setStyleSheet(dark_qss)
+    def _build_titlebar(self):
+        bar = QWidget()
+        bar.setFixedHeight(56)
+        bar.setStyleSheet(f"""
+            background-color: {COLORS['bg_surface']};
+            border-bottom: 1px solid {COLORS['border_subtle']};
+        """)
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(16, 0, 16, 0)
+        h.setSpacing(12)
+
+        # Logo PNG
+        logo_path = Path("app/assets/logo.png")
+        if logo_path.exists():
+            logo_label = QLabel()
+            pixmap = QPixmap(str(logo_path))
+            pixmap = pixmap.scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            logo_label.setPixmap(pixmap)
+            h.addWidget(logo_label)
+        else:
+            h.addWidget(QLabel("⬡"))  # fallback
+
+        # Brand name
+        brand = QLabel("REUP VIDEO PRO")
+        brand.setStyleSheet(f"""
+            font-size: 16px;
+            font-weight: 800;
+            color: {COLORS['accent_cyan']};
+            letter-spacing: 1.2px;
+        """)
+        h.addWidget(brand)
+
+        ver = QLabel(f"Studio Master {__version__}")
+        ver.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+        h.addWidget(ver)
+
+        h.addStretch()
+
+        # Status badge
+        self.badge_status = StatusBadge("● READY", COLORS['accent_green'])
+        h.addWidget(self.badge_status)
+
+        return bar
+
+    def _build_left_panel(self):
+        panel = QWidget()
+        panel.setMinimumWidth(240)
+        panel.setMaximumWidth(340)
+        panel.setStyleSheet(f"background-color: {COLORS['bg_surface']}; border-right: 1px solid {COLORS['border_subtle']};")
+
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(12, 14, 12, 12)
+        layout.setSpacing(12)
+
+        # ── File Management ──
+        layout.addWidget(SectionLabel("Workspace"))
+
+        # 4 nút cân đối 2x2
+        g=QGridLayout(); g.setSpacing(5); g.setColumnStretch(0,1); g.setColumnStretch(1,1)
+        self.btn_input  =IconButton("📂 Input");       self.btn_input.clicked.connect(self.load_video_folder)
+        self.btn_reload =IconButton("↻ Reload");       self.btn_reload.clicked.connect(self.reload_folder)
+        self.btn_output =IconButton("🗂 Output");       self.btn_output.clicked.connect(self.select_output_folder)
+        self.btn_open   =IconButton("↗ Mở Output");    self.btn_open.clicked.connect(self.open_output_folder)
+        g.addWidget(self.btn_input,0,0); g.addWidget(self.btn_reload,0,1)
+        g.addWidget(self.btn_output,1,0); g.addWidget(self.btn_open,1,1)
+        layout.addLayout(g)
+
+        # File count indicator
+        self.lbl_file_count = QLabel("0 video(s)")
+        self.lbl_file_count.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px; padding-left: 2px;")
+        layout.addWidget(self.lbl_file_count)
+
+        # File list
+        self.list_videos = QListWidget()
+        self.list_videos.setAcceptDrops(True)
+        self.list_videos.itemClicked.connect(self._on_video_selected)
+        layout.addWidget(self.list_videos, stretch=1)
+
+        layout.addWidget(Divider())
+
+        # ── Pipeline Steps ──
+        layout.addWidget(SectionLabel("Pipeline Steps"))
+
+        self.step_vars = {}
+        step_defs = [
+            ("s3", "🔎", "Dò Sub (OCR / Whisper)"),
+            ("s4", "🌐", "Dịch thuật (Gemini)"),
+            ("s5", "✍", "Vẽ Phụ đề (ASS)"),
+            ("s6", "🎧", "Mix TTS"),
+        ]
+        for key, icon, name in step_defs:
+            chk = StepCheckBox(icon, name)
+            self.step_vars[key] = chk
+            layout.addWidget(chk)
+
+        layout.addWidget(Divider())
+
+        # ── Special Controls ──
+        layout.addWidget(SectionLabel("Chế độ đặc biệt"))
+
+        self.chk_pause = QCheckBox("  ✋  Dừng để sửa Sub (Bước 4)")
+        self.chk_pause.setChecked(True)
+        self.chk_pause.setStyleSheet(f"""
+            QCheckBox {{
+                color: {COLORS['accent_amber']};
+                font-size: 12px;
+                font-weight: 600;
+                padding: 5px 8px;
+                border-radius: 6px;
+            }}
+            QCheckBox:hover {{ background-color: {COLORS['bg_hover']}; }}
+            QCheckBox::indicator {{
+                width: 16px; height: 16px;
+                border-radius: 4px;
+                border: 1.5px solid {COLORS['accent_amber']}80;
+                background-color: transparent;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {COLORS['accent_amber']};
+                border-color: {COLORS['accent_amber']};
+            }}
+        """)
+        layout.addWidget(self.chk_pause)
+
+        self.chk_pause_roi = QCheckBox("  📐  Dừng set ROI mỗi video")
+        self.chk_pause_roi.setChecked(True)
+        self.chk_pause_roi.setStyleSheet(f"""
+            QCheckBox {{
+                color: {COLORS['accent_red']};
+                font-size: 12px;
+                font-weight: 600;
+                padding: 5px 8px;
+                border-radius: 6px;
+            }}
+            QCheckBox:hover {{ background-color: {COLORS['bg_hover']}; }}
+            QCheckBox::indicator {{
+                width: 16px; height: 16px;
+                border-radius: 4px;
+                border: 1.5px solid {COLORS['accent_red']}80;
+                background-color: transparent;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {COLORS['accent_red']};
+                border-color: {COLORS['accent_red']};
+            }}
+        """)
+        layout.addWidget(self.chk_pause_roi)
+
+        layout.addSpacing(6)
+
+        # ── Action Buttons ──
+        btn_settings = IconButton("⚙  Settings", COLORS['text_secondary'])
+        btn_settings.clicked.connect(self.open_setup)
+        layout.addWidget(btn_settings)
+
+        self.btn_run = PrimaryButton("▶  CHẠY PIPELINE")
+        self.btn_run.clicked.connect(self._on_btn_run_clicked)
+        layout.addWidget(self.btn_run)
+
+        return panel
+
+    def _build_center_panel(self):
+        panel = QWidget()
+        panel.setStyleSheet(f"background-color: {COLORS['bg_base']};")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        # ── ROI Toolbar ──
+        roi_bar = QWidget()
+        roi_bar.setFixedHeight(38)
+        roi_bar.setStyleSheet(f"""
+            background-color: {COLORS['bg_surface']};
+            border: 1px solid {COLORS['border_subtle']};
+            border-radius: 8px;
+        """)
+        roi_h = QHBoxLayout(roi_bar)
+        roi_h.setContentsMargins(10, 0, 10, 0)
+        roi_h.setSpacing(12)
+
+        roi_icon = QLabel("✂")
+        roi_icon.setStyleSheet(f"color: {COLORS['accent_cyan']}; font-size: 14px;")
+        self.lbl_roi_val = QLabel(f"ROI  {self.cfg.step5.roi_y_start:.2f} — {self.cfg.step5.roi_y_end:.2f}")
+        self.lbl_roi_val.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px; font-family: JetBrains Mono, Consolas;")
+        roi_h.addWidget(roi_icon)
+        roi_h.addWidget(self.lbl_roi_val)
+        roi_h.addStretch()
+
+        self.btn_roi = IconButton("✂  Vẽ ROI", COLORS['accent_cyan'])
+        self.btn_roi.setFixedWidth(110)
+        self.btn_roi.clicked.connect(self.toggle_roi_mode)
+        roi_h.addWidget(self.btn_roi)
+        layout.addWidget(roi_bar)
+
+        # ── Video Canvas ──
+        self.canvas = VideoCanvas()
+        self.canvas.roi_start_y = self.cfg.step5.roi_y_start
+        self.canvas.roi_end_y = self.cfg.step5.roi_y_end
+        self.canvas.roi_updated.connect(self._on_roi_updated)
+        layout.addWidget(self.canvas, stretch=1)
+
+        # ── Playback Controls ──
+        ctrl = QWidget()
+        ctrl.setFixedHeight(48)
+        ctrl.setStyleSheet(f"""
+            background-color: {COLORS['bg_surface']};
+            border: 1px solid {COLORS['border_subtle']};
+            border-radius: 8px;
+        """)
+        ctrl_h = QHBoxLayout(ctrl)
+        ctrl_h.setContentsMargins(12, 6, 12, 6)
+        ctrl_h.setSpacing(12)
+
+        self.btn_play = QPushButton("▶")
+        self.btn_play.setFixedSize(32, 32)
+        self.btn_play.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_play.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['accent_cyan']}20;
+                color: {COLORS['accent_cyan']};
+                border: 1px solid {COLORS['accent_cyan']}50;
+                border-radius: 16px;
+                font-size: 13px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['accent_cyan']}40;
+            }}
+        """)
+        self.btn_play.clicked.connect(self.toggle_play)
+        ctrl_h.addWidget(self.btn_play)
+
+        self.lbl_timecode = QLabel("00:00:00")
+        self.lbl_timecode.setFixedWidth(64)
+        self.lbl_timecode.setStyleSheet(f"color: {COLORS['text_secondary']}; font-family: JetBrains Mono, Consolas; font-size: 12px;")
+        ctrl_h.addWidget(self.lbl_timecode)
+
+        self.slider = ClickableSlider(Qt.Orientation.Horizontal)
+        self.slider.sliderMoved.connect(self.on_slider_moved)
+        ctrl_h.addWidget(self.slider, stretch=1)
+
+        self.lbl_duration = QLabel("00:00:00")
+        self.lbl_duration.setFixedWidth(64)
+        self.lbl_duration.setStyleSheet(f"color: {COLORS['text_muted']}; font-family: JetBrains Mono, Consolas; font-size: 12px;")
+        ctrl_h.addWidget(self.lbl_duration)
+
+        layout.addWidget(ctrl)
+        return panel
+
+    def _build_right_panel(self):
+        panel = QWidget()
+        panel.setMinimumWidth(300)
+        panel.setMaximumWidth(500)
+        panel.setStyleSheet(f"background-color: {COLORS['bg_surface']}; border-left: 1px solid {COLORS['border_subtle']};")
+
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(12, 14, 12, 12)
+        layout.setSpacing(10)
+
+        # Sub header
+        sub_hdr = QHBoxLayout()
+        sub_hdr.setSpacing(8)
+        sub_title = QLabel("📝  Subtitle Editor")
+        sub_title.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 13px; font-weight: 700;")
+        sub_hdr.addWidget(sub_title)
+        sub_hdr.addStretch()
+
+        btn_load_sub = IconButton("↑ Nạp SRT", COLORS['accent_amber'])
+        btn_load_sub.setFixedHeight(28)
+        btn_load_sub.clicked.connect(lambda: self.load_srt_file(None))
+        sub_hdr.addWidget(btn_load_sub)
+        layout.addLayout(sub_hdr)
+
+        # Sub path indicator
+        self.lbl_srt_path = QLabel("Chưa có file SRT")
+        self.lbl_srt_path.setStyleSheet(f"""
+            color: {COLORS['text_muted']};
+            font-size: 11px;
+            font-family: JetBrains Mono, Consolas;
+            background-color: {COLORS['bg_elevated']};
+            border-radius: 4px;
+            padding: 4px 8px;
+        """)
+        self.lbl_srt_path.setWordWrap(True)
+        layout.addWidget(self.lbl_srt_path)
+
+        # Subtitle table
+        self.table_sub = QTableWidget(0, 2)
+        self.table_sub.setHorizontalHeaderLabels(["  Time  ", "Bản dịch (có thể sửa)"])
+        self.table_sub.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table_sub.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table_sub.verticalHeader().setVisible(False)
+        self.table_sub.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table_sub.setWordWrap(True)
+        self.table_sub.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.table_sub.setShowGrid(False)
+        self.table_sub.setAlternatingRowColors(True)
+        self.table_sub.setStyleSheet(self.table_sub.styleSheet() + f"""
+            QTableWidget {{ alternate-background-color: {COLORS['bg_elevated']}; }}
+        """)
+        self.table_sub.cellClicked.connect(self._on_sub_row_clicked)
+        self.table_sub.horizontalHeader().sectionResized.connect(lambda: self.table_sub.resizeRowsToContents())
+        self.table_sub.itemChanged.connect(lambda item: self.table_sub.resizeRowsToContents())
+        layout.addWidget(self.table_sub, stretch=1)
+
+        return panel
+
+    def _build_statusbar(self):
+        bar = QWidget()
+        bar.setFixedHeight(110)
+        bar.setStyleSheet(f"""
+            background-color: {COLORS['bg_surface']};
+            border-top: 1px solid {COLORS['border_subtle']};
+        """)
+        layout = QVBoxLayout(bar)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(6)
+
+        # Progress row
+        prog_row = QHBoxLayout()
+        prog_row.setSpacing(12)
+
+        self.lbl_progress = QLabel("Sẵn sàng")
+        self.lbl_progress.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px; min-width: 200px;")
+
+        self.progressbar = QProgressBar()
+        self.progressbar.setFixedHeight(5)
+        self.progressbar.setTextVisible(False)
+        self.progressbar.setValue(0)
+
+        self.lbl_pct = QLabel("0%")
+        self.lbl_pct.setFixedWidth(36)
+        self.lbl_pct.setStyleSheet(f"color: {COLORS['accent_cyan']}; font-size: 11px; font-weight: 700; font-family: JetBrains Mono, Consolas;")
+
+        btn_clear = QPushButton("✕ Xóa log")
+        btn_clear.setFixedWidth(80)
+        btn_clear.setFixedHeight(22)
+        btn_clear.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {COLORS['text_muted']};
+                border: 1px solid {COLORS['border_subtle']};
+                border-radius: 4px;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                color: {COLORS['text_secondary']};
+                border-color: {COLORS['border_normal']};
+            }}
+        """)
+        btn_clear.clicked.connect(lambda: self.console.clear())
+
+        prog_row.addWidget(self.lbl_progress)
+        prog_row.addWidget(self.progressbar, stretch=1)
+        prog_row.addWidget(self.lbl_pct)
+        prog_row.addWidget(btn_clear)
+        layout.addLayout(prog_row)
+
+        # Console
+        self.console = ConsoleOutput()
+        self.console.setFixedHeight(62)
+        layout.addWidget(self.console)
+
+        return bar
 
     # ==========================================
-    # LOGIC ĐIỀU HƯỚNG BẰNG EVENT BLOCKING
+    # LOGIC (same as original, minimal changes)
     # ==========================================
     def open_setup(self):
         dlg = ConfigWindow(self)
@@ -1076,213 +1991,172 @@ class ProGUI(QMainWindow):
     def _update_run_btn_label(self):
         if not self.is_paused_for_sub and self.worker is None:
             if self.chk_pause.isChecked():
-                self.btn_run.setText("▶ CHẠY (Dừng tại Bước 4)")
-                self.btn_run.setStyleSheet("background-color: #27ae60; color: white;")
+                self.btn_run.setText("▶  CHẠY  (Dừng tại B4)")
             else:
-                self.btn_run.setText("▶ CHẠY TOÀN BỘ")
-                self.btn_run.setStyleSheet("background-color: #8e44ad; color: white;")
+                self.btn_run.setText("▶  CHẠY TOÀN BỘ")
+            self.btn_run._set_state("idle")
+            self.badge_status.set_state("● READY", COLORS['accent_green'])
 
     def _on_btn_run_clicked(self):
-        # 1. NẾU ĐANG BỊ ĐÓNG BĂNG DO ROI (Nhấn nút "Xác nhận ROI")
         if not self.pause_roi_event.is_set():
             self.save_yaml_config()
-            if self.cap:
-                self.cap.release() # GIẢI PHÓNG VIDEO ĐỂ ENGINE KHÔNG BỊ LỖI
-                self.cap = None
-            self.log_msg("✅ Đã chốt ROI. Đang xử lý Video...")
+            if self.cap: self.cap.release(); self.cap = None
+            self.log_msg("✅ Đã chốt ROI. Đang xử lý...")
             self.btn_run.setEnabled(False)
-            self.btn_run.setText("⏳ ĐANG XỬ LÝ PIPELINE...")
-            self.btn_run.setStyleSheet("background-color: #e67e22; color: white;")
-            self.pause_roi_event.set() # Nhả luồng cho Engine chạy
+            self.btn_run.setText("⏳  ĐANG XỬ LÝ PIPELINE...")
+            self.btn_run._set_state("running")
+            self.badge_status.set_state("● RUNNING", COLORS['accent_amber'])
+            self.pause_roi_event.set()
             return
 
-        # 2. NẾU ĐANG BỊ ĐÓNG BĂNG DO SUB (Nhấn nút "Xác nhận Sub")
         if self.is_paused_for_sub:
             self.save_edited_sub()
             self.is_paused_for_sub = False
-            
-            # --- THÊM ĐOẠN NÀY: ĐÓNG VIDEO LẠI ĐỂ NHƯỜNG FILE CHO AI (Chống WinError 32) ---
-            if self.cap:
-                self.cap.release()
-                self.cap = None
-                self.canvas.clear() # Làm đen màn hình canvas
-            # -----------------------------------------------------------------------------
-                
+            if self.cap: self.cap.release(); self.cap = None; self.canvas.repaint_canvas()
             self.btn_run.setEnabled(False)
-            self.btn_run.setText("⏳ ĐANG CHẠY TIẾP BƯỚC 5->6...")
-            self.btn_run.setStyleSheet("background-color: #e67e22; color: white;")
-            self.log_msg("▶ Đã xác nhận Sub. Tiếp tục chạy Pipeline...")
+            self.btn_run.setText("⏳  ĐANG CHẠY B5→6...")
+            self.btn_run._set_state("running")
+            self.log_msg("▶ Đã xác nhận Sub. Tiếp tục Pipeline...")
             self.pause_event.set()
             return
 
-        # 3. BẮT ĐẦU CHẠY MỚI TỪ ĐẦU
         self.save_yaml_config()
         self.is_paused_for_sub = False
-        self.pause_event.set() 
+        self.pause_event.set()
         self.pause_roi_event.set()
-        
-        if self.cap:
-            self.cap.release()
-            self.cap = None
-            
+        if self.cap: self.cap.release(); self.cap = None
+
         self.btn_run.setEnabled(False)
-        self.btn_run.setText("⏳ ĐANG XỬ LÝ...")
-        self.btn_run.setStyleSheet("background-color: #e67e22; color: white;")
+        self.btn_run.setText("⏳  ĐANG XỬ LÝ...")
+        self.btn_run._set_state("running")
         self.progressbar.setValue(0)
-        
-        # ====================== SỬA Ở ĐÂY ======================
+        self.lbl_pct.setText("0%")
+        self.badge_status.set_state("● RUNNING", COLORS['accent_amber'])
+
         steps = {k: v.isChecked() for k, v in self.step_vars.items()}
-        
-        # Bổ sung s1 và s2 (vì bạn đã bỏ checkbox)
         app_state = {
             'chk_pause': self.chk_pause.isChecked(),
             'chk_pause_roi': self.chk_pause_roi.isChecked(),
             'pause_event': self.pause_event,
             'pause_roi_event': self.pause_roi_event,
-            'steps': {
-                's1': True,      # Luôn chạy Step 1
-                's2': True,      # Luôn chạy Step 2
-                **steps          # Merge s3,s4,s5,s6 từ checkbox
-            }
+            'steps': {'s1': True, 's2': True, **steps}
         }
-        # =======================================================
-        
+
         self.worker = PipelineWorker(app_state)
         self.worker.progress_sig.connect(self._update_progress)
         self.worker.log_sig.connect(self.log_msg)
         self.worker.pause_for_sub_sig.connect(self._on_worker_paused)
-        self.worker.request_roi_sig.connect(self._on_request_roi) 
+        self.worker.request_roi_sig.connect(self._on_request_roi)
         self.worker.finished_sig.connect(self._on_worker_finished)
         self.worker.start()
 
-    # --- HÀM XỬ LÝ KHI WORKER YÊU CẦU MỞ VIDEO ĐỂ SET ROI ---
     def _on_request_roi(self, video_path):
-        # --- THÊM DÒNG NÀY: Giúp app biết đích xác video nào đang chạy để Auto-load SRT ---
-        self.current_video_path = video_path 
-        
+        self.current_video_path = video_path
         self.load_video_player(video_path)
         if self.chk_pause_roi.isChecked():
-            self.log_msg(f"📐 Đã dừng tại: {Path(video_path).name}. Hãy vẽ ROI và bấm Xác nhận!")
+            self.log_msg(f"📐 Dừng ROI: {Path(video_path).name}")
             self.btn_run.setEnabled(True)
-            self.btn_run.setText("✅ XÁC NHẬN ROI VÀ CHẠY")
-            self.btn_run.setStyleSheet("background-color: #3498db; color: white; font-weight: bold;")
+            self.btn_run.setText("✅  XÁC NHẬN ROI & TIẾP TỤC")
+            self.btn_run._set_state("confirm_roi")
+            self.badge_status.set_state("● PAUSED — ROI", COLORS['accent_cyan'])
         else:
-            if self.cap:
-                self.cap.release() 
-                self.cap = None
+            if self.cap: self.cap.release(); self.cap = None
             self.pause_roi_event.set()
 
     def _on_worker_paused(self):
         self.is_paused_for_sub = True
-        self.log_msg("⏳ Luồng xử lý đã bị khóa. Đang tự động quét nạp Sub...")
+        self.log_msg("⏳ Đã dừng tại Bước 4 — đang nạp Sub...")
         self._auto_load_srt()
-        
-        # --- THÊM ĐOẠN NÀY: MỞ LẠI VIDEO ĐỂ XEM VÀ SỬA SUB ---
         if self.current_video_path and os.path.exists(self.current_video_path):
             self.load_video_player(self.current_video_path)
-            self.log_msg("🎬 Đã nạp lại Video Player để đồng bộ Timeline.")
-        # -----------------------------------------------------
-
         self.btn_run.setEnabled(True)
-        self.btn_run.setText("✅ XÁC NHẬN SUB & CHẠY TIẾP B5")
-        self.btn_run.setStyleSheet("background-color: #f39c12; color: black; font-weight: bold;")
+        self.btn_run.setText("✅  XÁC NHẬN SUB & CHẠY TIẾP B5")
+        self.btn_run._set_state("confirm_sub")
+        self.badge_status.set_state("● PAUSED — SUB REVIEW", COLORS['accent_amber'])
 
     def _on_worker_finished(self):
         self.is_paused_for_sub = False
         self.worker = None
         self.btn_run.setEnabled(True)
         self._update_run_btn_label()
+        self.badge_status.set_state("● DONE", COLORS['accent_green'])
 
     def _update_progress(self, completed, total, text):
         try:
-            # File hiện tại / Tổng số
             if total > 0:
-                pct = int((completed / total) * 100)
-                pct = max(0, min(100, pct)) 
+                pct = max(0, min(100, int((completed / total) * 100)))
                 self.progressbar.setValue(pct)
-                self.lbl_progress.setText(f"📁 Tiến độ File: {completed}/{total} ({pct}%)  ⚡ Đang chạy: {text}")
+                self.lbl_pct.setText(f"{pct}%")
+                self.lbl_progress.setText(f"File {completed}/{total} — {text[:50]}")
             else:
-                self.lbl_progress.setText(f"Trạng thái: {text}")
+                self.lbl_progress.setText(text[:60])
         except: pass
 
-    # ==========================================
-    # CƠ CHẾ NẠP SRT THÔNG MINH KẾT HỢP TÊN VIDEO
-    # ==========================================
     def _auto_load_srt(self):
-        if not self.current_video_path:
-            self.log_msg("⚠️ Chưa chọn Video trên danh sách để lấy Tên so khớp.")
-            return
-
-        # Tạo safe_stem y hệt như bên enginee.py
-        video_name = Path(self.current_video_path).name # Lấy cả đuôi mp4
+        if not self.current_video_path: return
+        video_name = Path(self.current_video_path).name
         safe_hash = hashlib.md5(video_name.encode('utf-8')).hexdigest()[:10]
         safe_stem = f"vid_{safe_hash}"
-        
+
         search_dirs = [
-            self.cfg.pipeline.step4_srt_translated, # Thư mục đích của B4
-            self.output_folder, 
+            self.cfg.pipeline.step4_srt_translated,
+            self.output_folder,
             self.current_folder,
-            Path("workspace/processing") # Folder làm việc tạm của engine
+            Path("workspace/processing")
         ]
-        
-        latest_srt = None
-        max_mtime = 0
-        
+
+        latest_srt, max_mtime = None, 0
         for d in search_dirs:
             if d and os.path.exists(str(d)):
                 for root, _, files in os.walk(d):
                     for file in files:
-                        # Đổi logic: Tìm đúng file chứa mã safe_stem
                         if file.endswith(".srt") and safe_stem in file:
                             p = os.path.join(root, file)
                             try:
                                 mtime = os.path.getmtime(p)
                                 if mtime > max_mtime:
-                                    max_mtime = mtime
-                                    latest_srt = p
+                                    max_mtime = mtime; latest_srt = p
                             except: pass
-                            
+
         if latest_srt:
             self.load_srt_file(latest_srt)
-            self.log_msg(f"✅ Auto-load chuẩn xác: {Path(latest_srt).name}")
+            self.log_msg(f"✅ Auto-load: {Path(latest_srt).name}")
         else:
-            self.log_msg(f"⚠️ Không tìm thấy file SRT nào chứa mã '{safe_stem}'. Vui lòng nạp thủ công.")
+            self.log_msg(f"⚠️ Không tìm thấy SRT ({safe_stem}). Nạp thủ công.")
 
     def load_srt_file(self, auto_path=None):
         path = auto_path
         if not path:
             path, _ = QFileDialog.getOpenFileName(self, "Chọn file SRT", "", "SRT Files (*.srt)")
         if not path or not os.path.exists(path): return
-        
+
         self.current_srt_path = path
+        self.lbl_srt_path.setText(Path(path).name)
         subs = pysrt.open(path, encoding='utf-8')
-        
+
         self.table_sub.setUpdatesEnabled(False)
         self.table_sub.setRowCount(len(subs))
         self.sub_data_cache = []
-        
+
         for i, s in enumerate(subs):
             start_ms, end_ms = s.start.ordinal, s.end.ordinal
-            
-            # Format Time cực đẹp
-            t_str = f"{self._ms_to_srt_time(start_ms)}\n{self._ms_to_srt_time(end_ms)}"
+            t_str = f"{self._ms_to_srt_time(start_ms)}\n→ {self._ms_to_srt_time(end_ms)}"
             time_item = QTableWidgetItem(t_str)
-            time_item.setFlags(Qt.ItemFlag.ItemIsEnabled) 
+            time_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             time_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            time_item.setForeground(QColor("#e67e22")) # Cho màu cam xịn xò
-            
+            time_item.setForeground(QColor(COLORS['accent_amber']))
+
             text_item = QTableWidgetItem(s.text.replace("\n", " "))
-            
+
             self.table_sub.setItem(i, 0, time_item)
             self.table_sub.setItem(i, 1, text_item)
             self.sub_data_cache.append({"start": start_ms, "end": end_ms})
-            
+
         self.table_sub.resizeRowsToContents()
         self.table_sub.setUpdatesEnabled(True)
 
     def _on_sub_row_clicked(self, row, col):
-        # Đã bỏ điều kiện `if col == 0:`
-        if self.fps > 0:
+        if self.fps > 0 and row < len(self.sub_data_cache):
             frame = int((self.sub_data_cache[row]["start"] / 1000.0) * self.fps)
             if self.is_playing: self.toggle_play()
             self.slider.setValue(frame)
@@ -1297,86 +2171,86 @@ class ProGUI(QMainWindow):
                     item = self.table_sub.item(i, 1)
                     if item: subs[i].text = item.text()
             subs.save(self.current_srt_path, encoding='utf-8')
-            self.log_msg("💾 Đã lưu những thay đổi của Bản dịch vào ổ cứng.")
+            self.log_msg("💾 Đã lưu bản dịch.")
         except Exception as e:
-            self.log_msg(f"❌ Lỗi khi lưu Sub: {e}")
+            self.log_msg(f"❌ Lỗi lưu Sub: {e}")
 
-    # ==========================================
-    # QUẢN LÝ THƯ MỤC & VIDEO
-    # ==========================================
     def load_video_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Chọn thư mục Input")
-        if folder: self.current_folder = folder; self.cfg.pipeline.input_videos = Path(folder); self.reload_folder(); self.save_yaml_config()
+        if folder:
+            self.current_folder = folder
+            self.cfg.pipeline.input_videos = Path(folder)
+            self.reload_folder()
+            self.save_yaml_config()
 
     def reload_folder(self):
         if not self.current_folder or not os.path.exists(str(self.current_folder)): return
         self.list_videos.clear()
-        files = [f for f in os.listdir(self.current_folder) if f.endswith(('.mp4', '.mkv', '.avi', '.mov'))]
-        for f in files: self.list_videos.addItem(f)
+        files = sorted([f for f in os.listdir(self.current_folder) if f.lower().endswith(('.mp4', '.mkv', '.avi', '.mov'))])
+        for f in files:
+            self.list_videos.addItem(f)
+        count = len(files)
+        self.lbl_file_count.setText(f"{count} video{'s' if count != 1 else ''}")
 
     def select_output_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Chọn thư mục Output")
-        if folder: self.output_folder = folder; self.cfg.pipeline.output_dir = Path(folder); self.save_yaml_config()
+        if folder:
+            self.output_folder = folder
+            self.cfg.pipeline.output_dir = Path(folder)
+            self.save_yaml_config()
 
     def open_output_folder(self):
-        # 1. Lấy đường dẫn user đã chọn, nếu không có thì lấy đường dẫn mặc định của Step 6
         out_dir = str(self.output_folder)
-        if not out_dir or out_dir == "." or out_dir == "":
+        if not out_dir or out_dir in (".", ""):
             if hasattr(self.cfg.pipeline, 'step6_final'):
                 out_dir = str(self.cfg.pipeline.step6_final)
             else:
-                self.log_msg("⚠️ Chưa cấu hình thư mục Output!")
-                return
-
-        # 2. Tự động tạo thư mục nếu nó chưa tồn tại
+                self.log_msg("⚠️ Chưa cấu hình Output."); return
         if not os.path.exists(out_dir):
-            try:
-                os.makedirs(out_dir, exist_ok=True)
-            except Exception as e:
-                self.log_msg(f"❌ Không thể tạo thư mục Output: {e}")
-                return
-
-        # 3. Mở thư mục bằng trình duyệt file của hệ điều hành
+            try: os.makedirs(out_dir, exist_ok=True)
+            except Exception as e: self.log_msg(f"❌ Không tạo được thư mục: {e}"); return
         try:
-            if platform.system() == "Windows": 
-                os.startfile(out_dir)
-            elif platform.system() == "Darwin": 
-                subprocess.Popen(["open", out_dir])
-            else: 
-                subprocess.Popen(["xdg-open", out_dir])
-            self.log_msg(f"📂 Đã mở thư mục Output: {out_dir}")
+            if platform.system() == "Windows": os.startfile(out_dir)
+            elif platform.system() == "Darwin": subprocess.Popen(["open", out_dir])
+            else: subprocess.Popen(["xdg-open", out_dir])
         except Exception as e:
             self.log_msg(f"❌ Lỗi mở thư mục: {e}")
 
     def log_msg(self, text):
-        self.console.append(text)
-        self.console.verticalScrollBar().setValue(self.console.verticalScrollBar().maximum())
+        self.console.log(text)
 
     def _on_video_selected(self, item):
         path = os.path.join(self.current_folder, item.text())
-        self.current_video_path = path # Lưu vết để thuật toán quét Tên Auto-load
+        self.current_video_path = path
         self.load_video_player(path)
 
     def load_video_player(self, path):
         if self.cap: self.cap.release()
         self.play_timer.stop()
-        self.is_playing = False; self.btn_play.setText("▶ Phát")
-        
+        self.is_playing = False
+        self.btn_play.setText("▶")
+
         self.cap = cv2.VideoCapture(path)
         if not self.cap.isOpened(): return
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 30
-        
-        self.slider.setMaximum(self.total_frames - 1); self.slider.setValue(0)
+
+        self.slider.setMaximum(self.total_frames - 1)
+        self.slider.setValue(0)
         self.show_frame_at(0)
+
+        total_s = int(self.total_frames / self.fps)
+        self.lbl_duration.setText(f"{total_s//3600:02d}:{(total_s%3600)//60:02d}:{total_s%60:02d}")
 
     def toggle_play(self):
         if not self.cap: return
         self.is_playing = not self.is_playing
         if self.is_playing:
-            self.btn_play.setText("⏸ Dừng"); self.play_timer.start(int(1000 / self.fps))
+            self.btn_play.setText("⏸")
+            self.play_timer.start(int(1000 / self.fps))
         else:
-            self.btn_play.setText("▶ Phát"); self.play_timer.stop()
+            self.btn_play.setText("▶")
+            self.play_timer.stop()
 
     def _video_loop(self):
         curr = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
@@ -1395,9 +2269,10 @@ class ProGUI(QMainWindow):
         ret, frame = self.cap.read()
         if ret:
             self.canvas.update_frame(frame)
-            s = int(frame_idx / self.fps); t = int(self.total_frames / self.fps)
-            self.lbl_timecode.setText(f"{s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d} / {t//3600:02d}:{(t%3600)//60:02d}:{t%60:02d}")
-            if not self.is_playing: self.sync_sub_with_timeline(frame_idx)
+            s = int(frame_idx / self.fps)
+            self.lbl_timecode.setText(f"{s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}")
+            if not self.is_playing:
+                self.sync_sub_with_timeline(frame_idx)
 
     def sync_sub_with_timeline(self, frame_idx):
         if not self.sub_data_cache or self.fps == 0: return
@@ -1405,30 +2280,60 @@ class ProGUI(QMainWindow):
         for i, item in enumerate(self.sub_data_cache):
             if item["start"] <= curr_ms <= item["end"]:
                 self.table_sub.selectRow(i)
+                self.table_sub.scrollToItem(self.table_sub.item(i, 0))
                 break
 
     def toggle_roi_mode(self):
-        is_drawing = not self.canvas.is_drawing if self.canvas.cursor().shape() == Qt.CursorShape.CrossCursor else True
+        is_drawing = self.canvas.cursor().shape() != Qt.CursorShape.CrossCursor
         if is_drawing:
-            self.btn_roi.setText("✂ Đang cắt ROI...")
-            self.btn_roi.setStyleSheet("color: #e74c3c; font-weight: bold;")
+            self.btn_roi.setText("✓  Đang vẽ ROI...")
+            self.btn_roi.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {COLORS['accent_red']}20;
+                    color: {COLORS['accent_red']};
+                    border: 1px solid {COLORS['accent_red']}60;
+                    border-radius: 6px;
+                    padding: 6px 14px;
+                    font-weight: 700;
+                    font-size: 12px;
+                }}
+            """)
             self.canvas.setCursor(QCursor(Qt.CursorShape.CrossCursor))
         else:
-            self.btn_roi.setText("✂ Click để Vẽ ROI")
+            self.btn_roi.setText("✂  Vẽ ROI")
             self.btn_roi.setStyleSheet("")
+            # Restore IconButton style
+            self.btn_roi.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {COLORS['accent_cyan']}15;
+                    color: {COLORS['accent_cyan']};
+                    border: 1px solid {COLORS['accent_cyan']}40;
+                    border-radius: 6px;
+                    padding: 6px 14px;
+                    font-size: 12px;
+                    font-weight: 600;
+                }}
+                QPushButton:hover {{
+                    background-color: {COLORS['accent_cyan']}25;
+                    border-color: {COLORS['accent_cyan']}90;
+                }}
+            """)
             self.canvas.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
             self.canvas.is_drawing = False
         self.canvas.repaint_canvas()
 
     def _on_roi_updated(self, y1, y2):
-        self.cfg.step5.roi_y_start, self.cfg.step5.roi_y_end = y1, y2
-        self.lbl_roi_val.setText(f"📐 Tọa độ ROI: {y1:.2f} - {y2:.2f}")
-        self.log_msg(f"✂ Đã chốt vùng ROI: {y1:.2f} -> {y2:.2f}")
+        self.cfg.step5.roi_y_start = y1
+        self.cfg.step5.roi_y_end = y2
+        self.lbl_roi_val.setText(f"ROI  {y1:.2f} — {y2:.2f}")
+        self.log_msg(f"✂ ROI chốt: {y1:.2f} → {y2:.2f}")
         self.save_yaml_config()
         self.toggle_roi_mode()
 
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = ProGUI()
-    window.showMaximized()
-    sys.exit(app.exec())
+
+# if __name__ == "__main__":
+#     app = QApplication(sys.argv)
+#     app.setStyle("Fusion")
+#     window = ProGUI()
+#     window.showMaximized()
+#     sys.exit(app.exec())
