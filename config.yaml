@@ -6,7 +6,7 @@ pipeline:
   step3_srt_raw: workspace\03_srt_raw
   step4_srt_translated: workspace\04_srt_translated
   step5_video_subbed: workspace\05_video_subbed
-  step6_final: D:\t\PROJECT_ROOT\output
+  step6_final: output
   step6_voices_cache: workspace\06_voices
   done: done
   failed: failed
@@ -42,25 +42,25 @@ step4:
   max_lines_per_chunk: 250
 step5:
   ocr_lang: ch
-  roi_y_start: 0.6886145404663924
+  roi_y_start: 0.7338820301783264
   roi_y_end: 1.0
   font_path: C\\:/Windows/Fonts/YuGothM.ttc
   font_size: 45
   max_words_per_line: 10
   text_color:
   - 255
-  - 255
-  - 255
+  - 215
+  - 0
   - 255
   outline_color:
-  - 157
-  - 157
-  - 157
+  - 50
+  - 255
+  - 140
   - 255
   pill_background_color:
   - 0
-  - 0
-  - 0
+  - 200
+  - 255
   - 255
 step6:
   tts_lang: vi
@@ -68,9 +68,9 @@ step6:
   min_words_for_tts: 0
   speedup_when_short: 1.3
   original_voice_volume: 0.2
-  tts_engine: qwen
+  tts_engine: edge
   stretch_ratio: 1.2
-  edge_voice: vi-VN-HoaiMyNeural
+  edge_voice: vi-VN-NamMinhNeural
   new_bgm_volume: 0.2
   music_volume: 0.05
   audio_mode: 1

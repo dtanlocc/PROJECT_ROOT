@@ -1551,7 +1551,7 @@ class ProGUI(QMainWindow):
                 ("step4", [("model_name","gemini-2.5-flash"), ("source_lang","zh-CN"), ("target_lang","vi"), ("gemini_api_keys",[])]),
                 ("step6", [("tts_lang","vi"), ("google_lang","vi"), ("tts_volume",1.4), ("music_volume",0.35),
                           ("extra_voice_volume",0.05), ("stretch_ratio",1.1), ("pitch_factor",1.2),
-                          ("speedup_when_short",1.5), ("audio_mode",1), ("random_bgm_dir",""), ("tts_engine","qwen")]),
+                          ("speedup_when_short",1.5), ("audio_mode",1), ("random_bgm_dir",""), ("tts_engine","qwen"), ("qwen_voice","ai-vy"), ("edge_voice", "")]),
             ]:
                 if sec not in data: data[sec] = {}
                 for k, d in pairs:

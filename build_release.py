@@ -67,63 +67,125 @@ def _s(s):
 """
     return base64.b64encode(marshal.dumps(compile(core_src, '<ram_turbo_core>', 'exec'))).decode('utf-8')
 
-# ------------------------------------------------------------------------------
-# 2. APEX TRANSFORMER (ĐÃ FIX LỖI PYDANTIC)
-# ------------------------------------------------------------------------------
 class ApexTransformer(ast.NodeTransformer):
     def __init__(self, seed, file_map, dir_map):
-        self.seed, self.file_map, self.dir_map, self.in_fstring = seed, file_map, dir_map, False
-        
+        self.seed = seed
+        self.file_map = file_map
+        self.dir_map = dir_map
+        self.in_fstring = False
+
     def _patch_module_path(self, module_path):
-        if not module_path: return module_path
-        parts = module_path.split('.')
-        return '.'.join([self.dir_map.get(p, self.file_map.get(p, p)) for p in parts])
-        
+        if not module_path:
+            return module_path
+        parts = [p.strip() for p in module_path.split('.')]
+        new_parts = []
+        for p in parts:
+            if p in self.dir_map:
+                new_parts.append(self.dir_map[p])
+            elif p in self.file_map:
+                new_parts.append(self.file_map[p])
+            else:
+                new_parts.append(p)
+        return '.'.join(new_parts)
+
     def visit_Import(self, node):
-        for alias in node.names: alias.name = self._patch_module_path(alias.name)
+        for alias in node.names:
+            alias.name = self._patch_module_path(alias.name)
         return node
-        
+
     def visit_ImportFrom(self, node):
-        node.module = self._patch_module_path(node.module); return node
-        
+        if node.module:
+            node.module = self._patch_module_path(node.module)
+        for alias in node.names:
+            if alias.name in self.file_map:
+                alias.name = self.file_map[alias.name]
+        return node
+
     def visit_JoinedStr(self, node):
-        old = self.in_fstring; self.in_fstring = True
-        self.generic_visit(node); self.in_fstring = old; return node
-        
+        old = self.in_fstring
+        self.in_fstring = True
+        self.generic_visit(node)
+        self.in_fstring = old
+        return node
+
     def visit_Constant(self, node):
-        if self.in_fstring: return node
+        if self.in_fstring: 
+            return node
         if isinstance(node.value, str):
             val = node.value
-            # BỌC THÉP: Tha cho các tên biến, tên hàm, tên field để không làm hỏng Pydantic
             if val.isidentifier() or val.startswith("__") or len(val) < 2:
                 return node
             enc = chaos_encrypt(val, self.seed)
-            return ast.Call(func=ast.Attribute(value=ast.Name(id=CORE_LIB_NAME, ctx=ast.Load()), attr='_s', ctx=ast.Load()), args=[ast.Constant(value=enc)], keywords=[])
+            return ast.Call(
+                func=ast.Attribute(value=ast.Name(id=CORE_LIB_NAME, ctx=ast.Load()), attr='_s', ctx=ast.Load()),
+                args=[ast.Constant(value=enc)], 
+                keywords=[]
+            )
         return node
-
 # ------------------------------------------------------------------------------
 # 3. GHOSTING & MAIN PIPELINE
 # ------------------------------------------------------------------------------
 def rand_name(length=14): return "_X_" + "".join(random.choices(string.ascii_letters + string.digits, k=length))
 
 def get_ghost_maps(build_path):
-    dir_map = {"core": rand_name(10), "steps": rand_name(10), "services": rand_name(10), "ui": rand_name(10)}
-    file_map = {f[:-3]: rand_name(16) for root, _, files in os.walk(build_path) for f in files if f.endswith(".py") and f not in ["__init__.py", "launcher.py", ENTRY_GUI]}
+    """Tạo tên ghost cho thư mục và file - Đảm bảo đồng bộ"""
+    dir_map = {
+        "core": rand_name(10),
+        "steps": rand_name(10),
+        "services": rand_name(10),
+        "ui": rand_name(10),
+        "language": rand_name(10),        # Quan trọng: language phải có
+    }
+    
+    file_map = {}
+    
+    # Quét tất cả file .py để tạo tên mới
+    for root, _, files in os.walk(build_path):
+        for f in files:
+            if f.endswith(".py") and f not in ["__init__.py", "launcher.py", ENTRY_GUI]:
+                old_name = f[:-3]
+                file_map[old_name] = rand_name(16)
+    
     file_map[ENTRY_GUI[:-3]] = rand_name(16)
+    
     return dir_map, file_map
 
 def main():
     t0 = time.time()
     build_seed = random.randint(2000000, 9000000)
-    for d in [RELEASE_DIR, INSPECT_DIR, BUILD_TEMP]:
-        if os.path.exists(d): shutil.rmtree(d)
+    # for d in [RELEASE_DIR, INSPECT_DIR, BUILD_TEMP]:
+    #     if os.path.exists(d): shutil.rmtree(d)
     os.makedirs(os.path.join(RELEASE_DIR, "app"), exist_ok=True)
     os.makedirs(INSPECT_DIR, exist_ok=True)
     
     print("🚀 [BƯỚC 1] Khởi tạo không gian Overlord Apex...")
     shutil.copytree(SOURCE_DIR, os.path.join(BUILD_TEMP, SOURCE_DIR))
     shutil.copy(ENTRY_GUI, os.path.join(BUILD_TEMP, ENTRY_GUI))
-    dir_map, file_map = get_ghost_maps(BUILD_TEMP)
+    # === SAU KHI copy vào BUILD_TEMP, TRƯỚC KHI obfuscate ===
+    print("🚀 [BƯỚC 1.5] Patch hardcoded paths trước khi Obfuscate...")
+
+    # Tính tên ghost trước
+    dir_map, file_map = get_ghost_maps(BUILD_TEMP)  # gọi sớm hơn
+    new_gui_name = file_map[ENTRY_GUI[:-3]]
+
+    steps_ghost   = dir_map.get("steps", "steps")
+    worker_new    = file_map.get("s6_tts_worker", "s6_tts_worker")
+    s6_mix_orig   = os.path.join(BUILD_TEMP, "app", "steps", "s6_mix.py")
+
+    if os.path.exists(s6_mix_orig):
+        with open(s6_mix_orig, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        old_p = "app/steps/s6_tts_worker.py"
+        new_p = f"app/{steps_ghost}/{worker_new}.py"
+        content = content.replace(old_p, new_p)
+
+        with open(s6_mix_orig, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"   ✅ Patch: {old_p} → {new_p}")
+
+    # Tiếp tục BƯỚC 2 (Obfuscate) như cũ...
+    
     new_gui_name = file_map[ENTRY_GUI[:-3]]
 
     # XUẤT BYTECODE ĐỂ CẤT VÀO SECURE_ASSETS (Thủ công lên Supabase)
@@ -152,39 +214,253 @@ def main():
                     with open(p, "w", encoding="utf-8") as file: file.write(ast.unparse(tree))
                 except Exception as e: print(f"   [!] Error {f}: {e}")
 
-    print("🚀 [BƯỚC 3] Thực thi Ghosting vật lý...")
+    print("🚀 [BƯỚC 3] Thực thi Ghosting vật lý - ĐỒNG BỘ tên thư mục & code...")
+
+    # 1. Rename thư mục cấp 1 trước
     for old_d, new_d in dir_map.items():
-        op, np = os.path.join(BUILD_TEMP, "app", old_d), os.path.join(BUILD_TEMP, "app", new_d)
-        if os.path.exists(op): os.rename(op, np)
+        old_path = os.path.join(BUILD_TEMP, "app", old_d)
+        if os.path.exists(old_path):
+            new_path = os.path.join(BUILD_TEMP, "app", new_d)
+            os.rename(old_path, new_path)
+            print(f"   Rename thư mục: {old_d} → {new_d}")
+
+    # 2. Rename thư mục 'language' nằm bên trong core (sau khi core đã rename)
+    core_new_name = dir_map.get("core")
+    language_new_name = dir_map.get("language")
+    if core_new_name and language_new_name:
+        language_old_path = os.path.join(BUILD_TEMP, "app", core_new_name, "language")
+        if os.path.exists(language_old_path):
+            language_new_path = os.path.join(BUILD_TEMP, "app", core_new_name, language_new_name)
+            os.rename(language_old_path, language_new_path)
+            print(f"   Rename thư mục language: language → {language_new_name} (bên trong {core_new_name})")
+
+    # 3. Rename tất cả file .py (đồng bộ với file_map)
+    renamed = 0
     for root, _, files in os.walk(BUILD_TEMP):
         for f in files:
-            if f.endswith(".py") and f[:-3] in file_map: os.rename(os.path.join(root, f), os.path.join(root, f"{file_map[f[:-3]]}.py"))
-
-    print("🚀 [BƯỚC 4] Biên dịch Cython (.pyd)...")
+            if f.endswith(".py") and f[:-3] in file_map:
+                old_file = os.path.join(root, f)
+                new_file = os.path.join(root, f"{file_map[f[:-3]]}.py")
+                os.rename(old_file, new_file)
+                renamed += 1
+    print(f"   Đã rename {renamed} file .py")
+                
+    print("🚀 [BƯỚC 4] Biên dịch Cython (.pyd) và Tách UI...")
     curr = os.getcwd(); abs_rel = os.path.abspath(RELEASE_DIR)
     os.chdir(BUILD_TEMP)
-    targets = [os.path.relpath(os.path.join(r, f), ".") for r, _, fs in os.walk(".") for f in fs if f.endswith(".py") and f not in ["launcher.py", "__init__.py"]]
-    setup(ext_modules=cythonize(targets, compiler_directives={'language_level': "3", 'always_allow_keywords': True}, quiet=True), script_args=["build_ext", "--build-lib", abs_rel])
+
+    # 1. Xác định thư mục/file GUI đã bị đổi tên (Ghosting) để loại trừ khỏi Cython
+    ui_ghost_dir = os.path.normpath(os.path.join("app", dir_map.get("ui", "ui")))
+    gui_ghost_run = file_map.get(ENTRY_GUI[:-3], ENTRY_GUI[:-3]) + ".py"
+
+    targets = []
+    for r, _, fs in os.walk("."):
+        for f in fs:
+            if f.endswith(".py") and f not in ["launcher.py", "__init__.py"]:
+                # Nếu file thuộc giao diện UI hoặc là run_gui -> Bỏ qua Cython
+                if ui_ghost_dir in os.path.normpath(r) or f == gui_ghost_run:
+                    continue
+                targets.append(os.path.relpath(os.path.join(r, f), "."))
+
+    # Compile các file Core, Engine... bằng Cython
+    setup(ext_modules=cythonize(targets, compiler_directives={'language_level': "3", 'always_allow_keywords': True, 'binding': True}, quiet=True), script_args=["build_ext", "--build-lib", abs_rel])
     os.chdir(curr)
     
+    # 2. Copy __init__.py VÀ các file UI (đã làm rối nhưng không build Cython) sang RELEASE_DIR
     for root, _, files in os.walk(BUILD_TEMP):
         for f in files:
-            if f == "__init__.py":
-                dst = os.path.join(RELEASE_DIR, os.path.relpath(os.path.join(root, f), BUILD_TEMP))
-                os.makedirs(os.path.dirname(dst), exist_ok=True); shutil.copy2(os.path.join(root, f), dst)
+            if f.endswith(".py"):
+                # Kiểm tra xem file này có phải là file UI vừa bị loại trừ ở trên không
+                is_ui_file = ui_ghost_dir in os.path.normpath(root) or f == gui_ghost_run
+                
+                if f == "__init__.py" or is_ui_file:
+                    dst = os.path.join(RELEASE_DIR, os.path.relpath(os.path.join(root, f), BUILD_TEMP))
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    shutil.copy2(os.path.join(root, f), dst)
 
+# ------------------------------------------------------------------------------
+    # 5. LAUNCHER APEX (GIAO DIỆN CUSTOM-TKINTER NGUYÊN BẢN CỦA BẠN)
     # ------------------------------------------------------------------------------
-    # 5. LAUNCHER APEX (BẢN BỌC THÉP - BÁO LỖI TIẾNG VIỆT)
-    # ------------------------------------------------------------------------------
-    print("🚀 [BƯỚC 5] Tạo Launcher (Logic V46.1 + RPC Flow)...")
+    print("🚀 [BƯỚC 5] Tạo Launcher (Tích hợp giao diện CustomTkinter)...")
+    
+    payload_template = f"""import sys, os, base64, marshal, types, traceback, urllib.request, json, subprocess, hashlib, ctypes
+
+log_path = r'{{base_dir}}/crash_log.txt'
+try:
+    venv_site = os.path.join(r'{{base_dir}}', 'venv', 'Lib', 'site-packages')
+    if os.path.exists(venv_site): sys.path.insert(0, venv_site)
+    sys.path.insert(0, r'{{base_dir}}')
+
+    bin_dir = os.path.join(r'{{base_dir}}', 'bin')
+    if os.path.exists(bin_dir):
+        os.environ['PATH'] = bin_dir + os.pathsep + os.environ.get('PATH', '')
+        if hasattr(os, 'add_dll_directory'):
+            try: os.add_dll_directory(bin_dir)
+            except Exception: pass
+
+    def get_hwid():
+        parts = []
+        try:
+            out = subprocess.check_output('wmic csproduct get uuid', shell=True, stderr=subprocess.DEVNULL).decode()
+            # ĐÃ SỬA: Dùng split('\\n') để giống hệt security.py, tránh lỗi wmic newline của Windows
+            parts.append(out.split('\\n')[1].strip())
+        except: parts.append('MB_UNKNOWN')
+        try:
+            out = subprocess.check_output('wmic cpu get ProcessorId', shell=True, stderr=subprocess.DEVNULL).decode()
+            parts.append(out.split('\\n')[1].strip())
+        except: parts.append('CPU_UNKNOWN')
+        try:
+            out = subprocess.check_output('wmic diskdrive get SerialNumber', shell=True, stderr=subprocess.DEVNULL).decode()
+            parts.append(out.split('\\n')[1].strip())
+        except: parts.append('DISK_UNKNOWN')
+        raw = '|'.join(parts)
+        return hashlib.sha256(f'OVERLORD_{{raw}}_SALT'.encode()).hexdigest()[:32].upper()
+
+    hwid = get_hwid()
+    lic_path = os.path.join(r'{{base_dir}}', 'system.lic')
+    user_key = None
+    has_valid_license = False
+
+    def _derive_fernet_key(h):
+        raw = hashlib.sha256(f'FERNET_DERIVE_{{h}}_OVERLORD_V2'.encode()).digest()
+        return base64.urlsafe_b64encode(raw)
+
+    if os.path.exists(lic_path):
+        try:
+            from cryptography.fernet import Fernet
+            with open(lic_path, 'rb') as f: encrypted = f.read()
+            fnet = Fernet(_derive_fernet_key(hwid))
+            raw_data = fnet.decrypt(encrypted)
+            data = json.loads(raw_data.decode())
+            user_key = data.get('key')
+            if user_key: has_valid_license = True
+        except Exception: pass
+
+    # ================= HIỂN THỊ GIAO DIỆN NẾU CHƯA CÓ KEY =================
+    if not has_valid_license:
+        import customtkinter as ctk
+        
+        ctk.set_appearance_mode("Dark")
+        ctk.set_default_color_theme("blue")
+        
+        class LoginPopup(ctk.CTk):
+            def __init__(self):
+                super().__init__()
+                self.title("Kích hoạt bản quyền")
+                self.geometry("460x320")
+                self.resizable(False, False)
+                
+                # Căn giữa màn hình
+                self.update_idletasks()
+                w, h = 460, 320
+                x = (self.winfo_screenwidth() // 2) - (w // 2)
+                y = (self.winfo_screenheight() // 2) - (h // 2)
+                self.geometry(f"{{w}}x{{h}}+{{x}}+{{y}}")
+                
+                icon_path = os.path.join(r'{{base_dir}}', "app", "assets", "icon.ico")
+                if os.path.exists(icon_path):
+                    try: self.iconbitmap(icon_path)
+                    except: pass
+
+                ctk.CTkLabel(self, text="BẢO MẬT HỆ THỐNG", font=("Arial", 22, "bold"), text_color="#3498db").pack(pady=(25, 5))
+                ctk.CTkLabel(self, text="Vui lòng nhập Key kích hoạt để mở khóa phần mềm", font=("Arial", 12), text_color="gray").pack(pady=(0, 15))
+                
+                hwid_frame = ctk.CTkFrame(self, fg_color="#2b2b2b", corner_radius=6)
+                hwid_frame.pack(pady=5, padx=20, fill="x")
+                
+                ctk.CTkLabel(hwid_frame, text="Hardware ID:", font=("Arial", 11, "bold")).pack(side="left", padx=10, pady=8)
+                self.lbl_hwid = ctk.CTkEntry(hwid_frame, width=220, font=("Consolas", 11), border_width=0, fg_color="transparent")
+                self.lbl_hwid.insert(0, hwid)
+                self.lbl_hwid.configure(state="readonly")
+                self.lbl_hwid.pack(side="right", padx=10)
+                
+                self.entry_key = ctk.CTkEntry(self, width=320, height=40, placeholder_text="Nhập License Key (Ví dụ: VIP-XXXX)...", font=("Arial", 13))
+                self.entry_key.pack(pady=20)
+                self.entry_key.bind("<Return>", lambda e: self.btn_click())
+                
+                self.btn_active = ctk.CTkButton(self, text="KÍCH HOẠT", width=200, height=40, font=("Arial", 14, "bold"), fg_color="#27ae60", hover_color="#2ecc71", command=self.btn_click)
+                self.btn_active.pack(pady=5)
+                
+                self.lbl_status = ctk.CTkLabel(self, text="", text_color="#e74c3c", font=("Arial", 11))
+                self.lbl_status.pack(pady=5)
+
+            def btn_click(self):
+                global has_valid_license, user_key
+                k = self.entry_key.get().strip()
+                if not k: return
+                    
+                self.btn_active.configure(state="disabled", text="ĐANG KIỂM TRA...")
+                self.lbl_status.configure(text="Đang đối chiếu HWID...", text_color="#f39c12")
+                self.update() 
+                
+                edge_url = "https://gfihmymecoykcogqykbl.supabase.co/functions/v1/verify-license"
+                req_data = json.dumps({{"p_key": k, "p_hwid": hwid}}).encode('utf-8')
+                req = urllib.request.Request(edge_url, data=req_data, headers={{"Content-Type": "application/json"}})
+                
+                try:
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        res_data = json.loads(resp.read().decode('utf-8'))
+                        expires_str = res_data.get("expires") if isinstance(res_data, dict) else None
+                        
+                        from cryptography.fernet import Fernet
+                        expiry = expires_str if expires_str else "PERMANENT_NO_EXPIRY_OVERLORD"
+                        lic_hash = hashlib.sha512(f'||{{k}}||<<SECURE>>||{{hwid}}||{{expiry}}||'.encode()).hexdigest()
+                        save_data = {{"key": k, "hash": lic_hash, "expires_at": expires_str}}
+                        
+                        fnet = Fernet(_derive_fernet_key(hwid))
+                        with open(lic_path, 'wb') as f:
+                            f.write(fnet.encrypt(json.dumps(save_data).encode()))
+                        
+                        user_key = k
+                        has_valid_license = True
+                        self.lbl_status.configure(text="✔ Kích hoạt thành công!", text_color="#2ecc71")
+                        self.update()
+                        self.after(500, self.destroy)
+                except urllib.error.HTTPError as e:
+                    err_msg = e.read().decode('utf-8')
+                    try: err_msg = json.loads(err_msg).get("error", err_msg)
+                    except: pass
+                    self.btn_active.configure(state="normal", text="KÍCH HOẠT")
+                    self.lbl_status.configure(text=f"❌ {{err_msg}}", text_color="#e74c3c")
+                except Exception as e:
+                    self.btn_active.configure(state="normal", text="KÍCH HOẠT")
+                    self.lbl_status.configure(text=f"❌ Lỗi mạng: {{str(e)}}", text_color="#e74c3c")
+
+        app = LoginPopup()
+        app.mainloop()
+
+    # ================= KÉO CORE VÀ KHỞI ĐỘNG RUN_GUI.PY =================
+    if has_valid_license:
+        rpc_url = '{SUPABASE_URL}/rest/v1/rpc/get_secure_payload'
+        req_data = json.dumps({{"p_key": user_key, "p_hwid": hwid, "p_asset": "core_blob"}}).encode('utf-8')
+        req_rpc = urllib.request.Request(rpc_url, data=req_data, headers={{"apikey": "{SUPABASE_ANON_KEY}", "Authorization": "Bearer {SUPABASE_ANON_KEY}", "Content-Type": "application/json"}})
+        
+        try:
+            with urllib.request.urlopen(req_rpc, timeout=20) as resp:
+                raw = resp.read().decode('utf-8').strip()
+                core_data = json.loads(raw)
+                core_blob = core_data.get('data') if isinstance(core_data, dict) else core_data
+                b = marshal.loads(base64.b64decode(core_blob))
+                m = types.ModuleType('{CORE_LIB_NAME}')
+                exec(b, m.__dict__)
+                sys.modules['{CORE_LIB_NAME}'] = m
+        except Exception as e:
+            ctypes.windll.user32.MessageBoxW(0, f"Lỗi tải lõi bảo mật:\\n{{str(e)}}", "Fatal Error", 16)
+            sys.exit(1)
+
+        # Đánh thức phần mềm chính
+        g = __import__('{new_gui_name}')
+        getattr(g, '{VOID_ENTRY}')()
+    else:
+        sys.exit(0)
+except Exception as specific_error:
+    sys.stderr.write(str(specific_error))
+    with open(log_path, 'a', encoding='utf-8') as f: f.write('\\n--- FATAL ERROR (LAUNCHER) ---\\n' + traceback.format_exc())
+    sys.exit(1)
+"""
+
     launcher_code = f"""
-import os, sys, subprocess, ctypes, base64, marshal, types, traceback, urllib.request, json, hashlib
-
-def get_hwid():
-    try:
-        uuid = subprocess.check_output("wmic csproduct get uuid", shell=True, stderr=subprocess.DEVNULL).decode().split('\\n')[1].strip()
-        return hashlib.sha256(f"OVERLORD_{{uuid}}_SALT".encode()).hexdigest()[:24].upper()
-    except: return "UNKNOWN-HWID-FATAL"
+import os, sys, subprocess, ctypes, traceback, base64
 
 def write_log_and_show_error(base_dir, msg, title="Critical Error"):
     try:
@@ -192,8 +468,7 @@ def write_log_and_show_error(base_dir, msg, title="Critical Error"):
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(f"\\n--- {{title}} ---\\n{{msg}}\\n")
     except: pass
-    try:
-        ctypes.windll.user32.MessageBoxW(0, str(msg), str(title), 16)
+    try: ctypes.windll.user32.MessageBoxW(0, str(msg), str(title), 16)
     except: pass
 
 def find_python_exe(base_dir):
@@ -217,87 +492,22 @@ def main():
         python_exe = find_python_exe(base_dir)
 
         if not python_exe:
-            write_log_and_show_error(base_dir, f"Khong tim thay venv tai:\\n{{base_dir}}", "Missing Environment")
+            write_log_and_show_error(base_dir, f"Không tìm thấy venv tại:\\n{{base_dir}}", "Lỗi Môi Trường")
             sys.exit(1)
+            
+        raw_payload = base64.b64decode("{base64.b64encode(payload_template.encode('utf-8')).decode('utf-8')}").decode('utf-8')
+        ready_payload = raw_payload.replace("{{base_dir}}", posix_base)
+        encoded_payload = base64.b64encode(ready_payload.encode('utf-8')).decode('utf-8')
         
-        payload_template = (
-            "import sys, os, base64, marshal, types, traceback, urllib.request, json, subprocess, hashlib, ctypes\\n"
-            "log_path = r'{{base_dir}}/crash_log.txt'\\n"
-            "try:\\n"
-            "    venv_site = os.path.join(r'{{base_dir}}', 'venv', 'Lib', 'site-packages')\\n"
-            "    if os.path.exists(venv_site): sys.path.insert(0, venv_site)\\n"
-            "    sys.path.insert(0, r'{{base_dir}}')\\n"
-            "\\n"
-            "    # TÍCH HỢP DLL (cuDNN, zlibwapi) TỪ THƯ MỤC BIN\\n"
-            "    bin_dir = os.path.join(r'{{base_dir}}', 'bin')\\n"
-            "    if os.path.exists(bin_dir):\\n"
-            "        os.environ['PATH'] = bin_dir + os.pathsep + os.environ.get('PATH', '')\\n"
-            "        if hasattr(os, 'add_dll_directory'):\\n"
-            "            try: os.add_dll_directory(bin_dir)\\n"
-            "            except Exception: pass\\n"
-            "\\n"
-            "    def get_hwid():\\n"
-            "        try:\\n"
-            "            u = subprocess.check_output('wmic csproduct get uuid', shell=True).decode().split('\\\\n')[1].strip()\\n"
-            "            return hashlib.sha256(f'OVERLORD_{{u}}_SALT'.encode()).hexdigest()[:24].upper()\\n"
-            "        except: return 'ERR'\\n"
-            "\\n"
-            "    hwid = get_hwid()\\n"
-            "    lic_path = os.path.join(r'{{base_dir}}', 'system.lic')\\n"
-            "\\n"
-            "    if not os.path.exists(lic_path):\\n"
-            "        ctypes.windll.user32.MessageBoxW(0, 'Phần mềm chưa kích hoạt! Vui lòng cài đặt bằng file Setup.exe', 'Lỗi Bản Quyền', 16)\\n"
-            "        sys.exit(1)\\n"
-            "\\n"
-            "    with open(lic_path, 'r', encoding='utf-8') as f: lic_raw = f.read().strip()\\n"
-            "    if not lic_raw: raise Exception('LỖI: File system.lic đang bị trống rỗng. Vui lòng chạy lại file Setup.exe để kích hoạt!')\\n"
-            "    try:\\n"
-            "        data = json.loads(lic_raw)\\n"
-            "    except Exception:\\n"
-            "        raise Exception('LỖI: File system.lic bị sai định dạng dữ liệu. Vui lòng chạy lại file Setup.exe!')\\n"
-            "\\n"
-            "    lic, saved_hash = data.get('key'), data.get('hash')\\n"
-            "    if saved_hash != hashlib.sha512(f'||{{lic}}||<<SECURE>>||{{hwid}}||'.encode()).hexdigest():\\n"
-            "        raise Exception('LỖI: Bản quyền không hợp lệ hoặc đã bị chỉnh sửa cho thiết bị này!')\\n"
-            "\\n"
-            "    rpc_url = '{SUPABASE_URL}/rest/v1/rpc/get_secure_payload'\\n"
-            "    req_data = json.dumps({{'p_key': lic, 'p_hwid': hwid, 'p_asset': 'core_blob'}}).encode('utf-8')\\n"
-            "    req_rpc = urllib.request.Request(rpc_url, data=req_data, headers={{'apikey': '{SUPABASE_ANON_KEY}', 'Authorization': 'Bearer {SUPABASE_ANON_KEY}', 'Content-Type': 'application/json'}})\\n"
-            "    try:\\n"
-            "        with urllib.request.urlopen(req_rpc, timeout=20) as resp:\\n"
-            "            raw = resp.read().decode('utf-8').strip()\\n"
-            "    except Exception as e:\\n"
-            "        raise Exception(f'LỖI MẠNG: Không thể kết nối tới máy chủ Supabase. Chi tiết: {{e}}')\\n"
-            "\\n"
-            "    if not raw or raw == 'null': raise Exception('LỖI DỮ LIỆU: Máy chủ trả về rỗng! Bạn CHƯA UPLOAD nội dung file core_blob.enc lên Database Supabase.')\\n"
-            "    try:\\n"
-            "        core_data = json.loads(raw)\\n"
-            "    except Exception:\\n"
-            "        raise Exception(f'LỖI DỮ LIỆU: Dữ liệu từ Supabase không phải là JSON. Vui lòng kiểm tra lại hàm RPC. Thực tế nhận được: {{raw[:50]}}...')\\n"
-            "\\n"
-            "    b = marshal.loads(base64.b64decode(core_data))\\n"
-            "    m = types.ModuleType('{CORE_LIB_NAME}')\\n"
-            "    exec(b, m.__dict__)\\n"
-            "    sys.modules['{CORE_LIB_NAME}'] = m\\n"
-            "\\n"
-            "    g = __import__('{new_gui_name}')\\n"
-            "    getattr(g, '{VOID_ENTRY}')()\\n"
-            "except Exception as specific_error:\\n"
-            "    sys.stderr.write(str(specific_error))\\n"
-            "    with open(log_path, 'a', encoding='utf-8') as f: f.write('\\\\n--- FATAL ERROR (CORE) ---\\\\n' + str(specific_error))\\n"
-            "    try: ctypes.windll.user32.MessageBoxW(0, str(specific_error), 'Fatal Error', 16)\\n"
-            "    except: pass\\n"
-            "    sys.exit(1)\\n"
-        )
-        
-        final_cmd = f"import base64; exec(base64.b64decode('{{base64.b64encode(payload_template.replace('{{base_dir}}', posix_base).encode()).decode()}}').decode('utf-8'))"
+        final_cmd = f"import base64; exec(base64.b64decode('{{encoded_payload}}').decode('utf-8'))"
 
         CREATE_NO_WINDOW = 0x08000000
-        result = subprocess.run([python_exe, "-c", final_cmd], cwd=base_dir, creationflags=CREATE_NO_WINDOW, capture_output=True, text=True)
+        # ĐÃ SỬA: Ép Python chạy chế độ UTF-8 (-X utf8) và cấu hình encoding='utf-8' để đọc Output
+        result = subprocess.run([python_exe, "-X", "utf8", "-c", final_cmd], cwd=base_dir, creationflags=CREATE_NO_WINDOW, capture_output=True, text=True, encoding='utf-8')
         
         if result.returncode != 0:
             err_msg = result.stderr if result.stderr else result.stdout
-            write_log_and_show_error(base_dir, f"Tiến trình bị ngắt (Code {{result.returncode}}).\\n\\nStderr:\\n{{err_msg}}", "Subprocess Crash")
+            write_log_and_show_error(base_dir, f"Tiến trình venv bị ngắt (Code {{result.returncode}}).\\n\\nStderr:\\n{{err_msg}}", "Subprocess Crash")
 
     except Exception:
         err_dir = base_dir if 'base_dir' in locals() else os.getcwd()

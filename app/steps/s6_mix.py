@@ -13,7 +13,7 @@ from vietnormalizer import VietnameseNormalizer
 import pysrt
 from pydub import AudioSegment, silence
 import random
-
+from app.steps.s6_tts_worker import run_qwen_tts_logic
 
 class Step6Mix(BaseStep):
     def __init__(self, cfg, ffmpeg):
@@ -61,6 +61,7 @@ class Step6Mix(BaseStep):
                     voice_data = ref_info[qwen_voice_id]
                     self.ref_audio = Path("gwen-tts") / voice_data["audio_path"]
                     self.ref_text = voice_data["text"]
+                    logger.info(f"Audio path: {self.ref_audio}. Ref Text: {self.ref_text}")
                 else:
                     logger.warning(f"⚠️ Giọng Qwen '{qwen_voice_id}' không tồn tại. Dùng mặc định Ái Vy.")
                     self.ref_audio = Path("gwen-tts/data/ref_audio/ai_vy.wav")
@@ -98,38 +99,23 @@ class Step6Mix(BaseStep):
             return base / "Scripts" / "python.exe"
         return base / "bin" / "python"
 
-    def _run_tts_in_separate_venv(self, texts: list[str], output_dir: Path):
-        tts_python = self._get_tts_python_path()
-        worker_script = Path("app/steps/s6_tts_worker.py")
-
-        if not tts_python.exists():
-            raise RuntimeError(f"Không tìm thấy venv_tts: {tts_python}")
-
-        processed_texts = [self._normalize_text(t) for t in texts]
-
-        temp_json = output_dir / "tts_input.json"
-        data = {
-            "texts": processed_texts,
-            "output_dir": str(output_dir),
-            "ref_audio": str(self.ref_audio),
-            "ref_text": self.ref_text,
-            "language": self.qwen_language,
-        }
-        with open(temp_json, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
-        cmd = [str(tts_python), str(worker_script), str(temp_json)]
-        logger.info(f"🎙️ [Qwen] Đang sinh {len(texts)} đoạn thoại bằng Qwen-TTS...")
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=Path.cwd(), encoding="utf-8", errors="replace")
-
-        if temp_json.exists():
-            temp_json.unlink()
-
-        if result.returncode != 0:
-            logger.error(f"TTS worker failed: {result.stderr[-1000:]}")
-            raise RuntimeError(f"Qwen-TTS error: {result.stderr[-800:]}")
-
-        logger.success(f"✅ Đã sinh xong {len(texts)} đoạn TTS (Qwen)")
+    def _run_tts_directly(self, texts: list[str], output_dir: Path):
+        logger.info(f"🎙️ [Qwen-Internal] Đang sinh {len(texts)} đoạn thoại...")
+        
+        # Gọi trực tiếp, không cần subprocess, không cần JSON tạm
+        try:
+            success = run_qwen_tts_logic(
+                texts=texts,
+                output_dir=output_dir,
+                ref_audio=self.ref_audio,
+                ref_text=self.ref_text,
+                language=self.qwen_language
+            )
+            if success:
+                logger.success(f"✅ Đã sinh xong {len(texts)} đoạn TTS")
+        except Exception as e:
+            logger.error(f"❌ Lỗi sinh Qwen-TTS: {e}")
+            raise
 
     def _get_dur(self, p: Path) -> float:
         """Lấy thời lượng audio bằng ffprobe - dùng cho Qwen"""
@@ -150,8 +136,8 @@ class Step6Mix(BaseStep):
         v_cache.mkdir(parents=True, exist_ok=True)
 
         subs = pysrt.open(str(srt_path), encoding='utf-8')
-        texts = [s.text for s in subs]
-        self._run_tts_in_separate_venv(texts, v_cache)
+        texts = [self._normalize_text(s.text) for s in subs]
+        self._run_tts_directly(texts, v_cache)
 
         logger.info(f"🎬 [Qwen] STRICT SYNC - Stretch={self.stretch_ratio}x | "
                     f"Voice ngắn → silence, Voice dài → speedup")
@@ -344,7 +330,7 @@ class Step6Mix(BaseStep):
         def sync_generate():
             if not text.strip():
                 AudioSegment.silent(duration=800).export(str(out_path), format="mp3")
-                print(f"⏩ idx {idx} rỗng, tạo file im lặng.")
+                logger.info(f"⏩ idx {idx} rỗng, tạo file im lặng.")
                 return
 
             prepared_text, repeat_count = self._prepare_text_for_tts(text)
@@ -352,7 +338,7 @@ class Step6Mix(BaseStep):
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    print(f"🎙️ Sinh giọng Google idx {idx} (Lần {attempt+1}): '{text[:50]}...'")
+                    logger.info(f"🎙️ Sinh giọng Google idx {idx} (Lần {attempt+1}): '{text[:50]}...'")
                     tts = gTTS(prepared_text, lang=self.target_lang, slow=False)
                     tts.save(out_path)
 
@@ -370,10 +356,10 @@ class Step6Mix(BaseStep):
                 except Exception as e:
                     err = str(e)
                     if attempt < max_retries - 1:
-                        print(f"⚠️ Lỗi TTS idx {idx}, đang đợi 3s để thử lại... (Chi tiết: {err})")
+                        logger.info(f"⚠️ Lỗi TTS idx {idx}, đang đợi 3s để thử lại... (Chi tiết: {err})")
                         time.sleep(3) 
                     else:
-                        print(f"❌ Lỗi TTS idx {idx} sau 3 lần thử: {err}")
+                        logger.info(f"❌ Lỗi TTS idx {idx} sau 3 lần thử: {err}")
                         if "429" in err or "Too Many Requests" in err or "Connection" in err:
                             try:
                                 import winsound
@@ -385,74 +371,17 @@ class Step6Mix(BaseStep):
                             os.remove(out_path)
 
         await asyncio.to_thread(sync_generate)
-
-    # ================================================================
-    #  EDGE TTS (GIỐNG CODE CŨ)
-    # ================================================================
-    # async def gen_tts_edge(self, idx: int, text: str, out_path: Path):
-    #     if not text.strip():
-    #         AudioSegment.silent(duration=800).export(str(out_path), format="mp3")
-    #         return
-        
-    #     prepared_text, _ = self._prepare_text_for_tts(text)
-    #     try:
-    #         import edge_tts
-    #         voice_id = getattr(self.cfg.step6, "edge_voice", None)
-    #         communicate = edge_tts.Communicate(prepared_text, voice_id)
-    #         await communicate.save(str(out_path))
-    #     except Exception as e:
-    #         print(f"Lỗi TTS: {e}")
-    
-    
-    # async def gen_tts_edge(self, idx: int, text: str, out_path: Path):
-    #     import asyncio
-    #     from pydub import AudioSegment
-    #     import edge_tts
-
-    #     # 1. Bỏ qua nếu text rỗng từ đầu
-    #     if not text.strip():
-    #         AudioSegment.silent(duration=800).export(str(out_path), format="mp3")
-    #         return
-        
-    #     # Chuẩn bị text
-    #     prepared_text, _ = self._prepare_text_for_tts(text)
-        
-    #     # 2. Xử lý trường hợp text bị rỗng sau khi filter (chuẩn hóa)
-    #     if not prepared_text.strip():
-    #         print(f"[Cảnh báo] Text rỗng sau khi xử lý tại index {idx}. Bỏ qua.")
-    #         AudioSegment.silent(duration=800).export(str(out_path), format="mp3")
-    #         return
-
-    #     # 3. Gắn giọng đọc mặc định nếu trong file config bị thiếu
-    #     voice_id = getattr(self.cfg.step6, "edge_voice", "vi-VN-HoaiMyNeural") 
-
-    #     # 4. Cơ chế Retry để chống rớt mạng của Edge TTS
-    #     max_retries = 3
-    #     for attempt in range(max_retries):
-    #         try:
-    #             communicate = edge_tts.Communicate(prepared_text, voice_id)
-    #             await communicate.save(str(out_path))
-    #             return  # Nếu thành công thì thoát hàm luôn
-                
-    #         except Exception as e:
-    #             print(f"Lỗi TTS tại index {idx} (Lần thử {attempt + 1}/{max_retries}): {e}")
-    #             if attempt < max_retries - 1:
-    #                 await asyncio.sleep(2)  # Nghỉ 2 giây rồi thử lại
-    #             else:
-    #                 # 5. Nếu thử 3 lần đều thất bại -> Tạo file im lặng để không làm crash tool
-    #                 print(f"[Lỗi nặng] Không thể tạo TTS cho index {idx}. Chèn file im lặng thay thế.")
-    #                 AudioSegment.silent(duration=800).export(str(out_path), format="mp3")
-    
-    
     
     async def gen_tts_edge(self, idx: int, text: str, out_path: Path):
         import asyncio
-        import random
         from pydub import AudioSegment
         import edge_tts
 
+        # --- ĐIỂM CỐT LÕI MỚI ---
+        # Đặt Semaphore = 1. Cửa hàng giờ chỉ có 1 quầy thu ngân. 
+        # Bắt buộc các câu phải xếp hàng đi qua từng câu một, không bao giờ có 2 câu chạy cùng lúc.
         if not hasattr(self, '_tts_semaphore'):
-            self._tts_semaphore = asyncio.Semaphore(3)
+            self._tts_semaphore = asyncio.Semaphore(1)
 
         if not text.strip():
             AudioSegment.silent(duration=800).export(str(out_path), format="mp3")
@@ -468,7 +397,10 @@ class Step6Mix(BaseStep):
         voice_id = getattr(self.cfg.step6, "edge_voice", "vi-VN-HoaiMyNeural") 
 
         async with self._tts_semaphore:
-            await asyncio.sleep(random.uniform(1, 2))
+            # --- ĐIỂM CỐT LÕI 2 ---
+            # Do Semaphore = 1, tiến trình đã bị khóa thành xếp hàng dọc.
+            # Nên dòng sleep(1) này sẽ đảm bảo CỨ MỖI 1 GIÂY MỚI CÓ 1 REQUEST ĐƯỢC ĐẨY ĐI.
+            await asyncio.sleep(1)
 
             # --- THAY ĐỔI LOGIC RETRY TẠI ĐÂY ---
             max_rounds = 2             # Tổng số vòng làm lại (Vòng 1 và Vòng 2)

@@ -84,12 +84,20 @@ class Step5Overlay(BaseStep):
         return default
 
     def _ms_to_ass_time(self, ms: float) -> str:
-        ms = int(ms)
-        h  = ms // 3600000
-        m  = (ms % 3600000) // 60000
-        s  = (ms % 60000) // 1000
-        cs = (ms % 1000) // 10
-        return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+        try:
+            # Dùng float(ms) trước để tránh lỗi nếu ms là string, sau đó round để chính xác nhất
+            ms_int = int(round(float(ms)))
+            
+            h  = ms_int // 3600000
+            m  = (ms_int % 3600000) // 60000
+            s  = (ms_int % 60000) // 1000
+            cs = (ms_int % 1000) // 10
+            
+            # Ép int() một lần nữa cho chắc chắn từng biến trước khi vào :02d
+            return f"{int(h)}:{int(m):02d}:{int(s):02d}.{int(cs):02d}"
+        except Exception as e:
+            # Nếu có lỗi (ví dụ ms là None), trả về thời gian 0 thay vì crash cả tool
+            return "0:00:00.00"
 
     ASS_WIDTH_SCALE = 1.18
 

@@ -16,7 +16,9 @@ LZMADictionarySize=131072
 [Files]
 ; 1. Nạp file requirements.txt vào bộ nhớ tạm
 Source: "Reup_Video_Release\requirements.txt"; DestDir: "{tmp}"; Flags: dontcopy
-
+; Nạp thêm file requirements cho TTS
+; Source: "Reup_Video_Release\requirements_tts.txt"; DestDir: "{tmp}"; Flags: dontcopy
+ 
 ; 2. Nạp các file cốt lõi NHƯNG BỎ QUA HOÀN TOÀN venv, bin và pycache (Để Tool cực nhẹ)
 Source: "Reup_Video_Release\*"; DestDir: "{app}"; Excludes: "venv\*, bin\*, __pycache__\*, .git\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -114,6 +116,9 @@ begin
   ExtractTemporaryFile('activate.ps1');
   ExtractTemporaryFile('requirements.txt'); 
   CopyFile(ExpandConstant('{tmp}\requirements.txt'), Path + '\requirements.txt', False);
+  
+  // ExtractTemporaryFile('requirements_tts.txt');
+  // CopyFile(ExpandConstant('{tmp}\requirements_tts.txt'), Path + '\requirements_tts.txt', False);
 
   WizardForm.NextButton.Enabled := False;
   WizardForm.BackButton.Enabled := False;

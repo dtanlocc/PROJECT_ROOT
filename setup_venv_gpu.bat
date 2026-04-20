@@ -33,17 +33,17 @@ if errorlevel 1 (
 call venv\Scripts\activate.bat
 python -m pip install --upgrade pip
 
-echo [1/3] PyTorch GPU (CUDA 12.1)...
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+echo [1/3] PyTorch GPU (CUDA 11.8)...
+pip install torch==2.6.0+cu118 torchaudio==2.6.0+cu118 --index-url https://download.pytorch.org/whl/cu118
 if errorlevel 1 (
     echo [LOI] PyTorch that bai. Thu setup_venv_cpu.bat.
     exit /b 1
 )
 
 echo [2/3] PaddlePaddle GPU (CUDA 11.8)...
-pip install --no-cache-dir paddlepaddle-gpu==2.6.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/ --trusted-host www.paddlepaddle.org.cn
+pip install paddlepaddle-gpu==2.5.2 -f https://www.paddlepaddle.org.cn/whl/windows/mkl/avx/stable.html
 if errorlevel 1 (
-    echo [CANH BAO] Paddle GPU that bai. Co the cai: pip install paddlepaddle==2.6.1
+    echo [CANH BAO] Paddle GPU that bai. Co the cai: pip install paddlepaddle==2.6.2
     REM Bo pause, chi canh bao roi cho chay tiep
 )
 
@@ -53,6 +53,15 @@ if errorlevel 1 (
     echo [LOI] Cai requirements that bai.
     exit /b 1
 )
+
+pip uninstall paddleocr paddlex numpy opencv-python scikit-learn -y
+pip install numpy==1.26.4 opencv-python==4.6.0.66 paddleocr==2.7.3
+
+pip install "huggingface-hub==0.36.2" "transformers==4.57.3" --force-reinstall --no-cache-dir
+pip install numpy==1.26.4 PyYAML==6.0.2 click==8.1.7 protobuf==3.20.2 --force-reinstall --no-cache-dir
+
+
+
 
 echo.
 echo ===============================================================================

@@ -1,39 +1,46 @@
-# ============================================================
-# PIPELINE REUP VIDEO - REQUIREMENTS
-# GPU: chay setup_venv.bat (PyTorch + Paddle cung CUDA 11.8)
-# CPU: chay setup_venv_cpu.bat (tranh loi shm.dll)
-# ============================================================
-
-# --- CORE ---
+# --- NỀN TẢNG (Pin chặt để không nhảy version) ---
 numpy==1.26.4
-python-dotenv==1.2.1
+protobuf==3.20.2
+Pillow==12.2.0
 PyYAML==6.0.2
-loguru>=0.7.2
-tqdm
-colorama
-pydantic>=2.0.0
-packaging
+pydantic==2.12.5
 
-# --- AUDIO ---
-demucs==4.0.1
+# --- HÌNH ẢNH & OCR ---
+opencv-python==4.6.0.66
+paddleocr==2.7.3
+
+# --- QWEN-TTS & TRANSFORMERS ---
+qwen-tts==0.1.1
+transformers==4.57.3
+# torch==2.7.1+cu118
+# torchaudio==2.7.1+cu118
+accelerate==1.12.0
+librosa==0.11.0
+einops==0.8.2
 soundfile==0.13.1
-pydub==0.25.1
+scikit-learn==1.3.2
+
+# --- CÁC AI KHÁC ---
+faster-whisper==1.2.1
+demucs==4.0.1
+deep-translator==1.11.4
+google-generativeai==0.8.6
+edge_tts==7.2.7
 gTTS==2.5.4
 
-# --- AI / TRANSCRIPTION ---
-faster-whisper==1.2.1
-paddleocr==2.7.3
-protobuf==3.20.2
-opencv-python==4.6.0.66
-Pillow>=10.0.0
-
-# --- TRANSLATION (Step 4 dùng deep_translator) ---
-deep-translator>=1.11.4
-# google-generativeai: tu chon neu sau nay dung Gemini
-google-generativeai>=0.4.0
-
-# --- SUBTITLES ---
+# --- HỆ THỐNG & GIAO DIỆN ---
+customtkinter==5.2.2
+PyQt6==6.11.0
+pyqt6_sip==13.11.1
+Cython==3.2.4
+loguru==0.7.3
 pysrt==1.1.2
-
-# --- GUI ---
-customtkinter>=5.2.0
+vietnormalizer==0.2.3
+vinorm==2.0.7
+regex==2026.4.4
+tqdm
+colorama
+packaging
+lingua-language-detector
+ctranslate2==3.24.0
+setuptools==80.9.0

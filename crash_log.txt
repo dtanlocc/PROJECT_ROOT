@@ -1,0 +1,16 @@
+
+--- FATAL ERROR (CORE) ---
+unsupported operand type(s) for *: 'NoneType' and 'float'
+--- Subprocess Crash ---
+Tiến trình bị ngắt (Code 1).
+
+Stderr:
+unsupported operand type(s) for *: 'NoneType' and 'float'
+
+--- FATAL ERROR (CORE) ---
+unsupported operand type(s) for *: 'NoneType' and 'float'
+--- Subprocess Crash ---
+Tiến trình bị ngắt (Code 1).
+
+Stderr:
+unsupported operand type(s) for *: 'NoneType' and 'float'
